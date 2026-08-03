@@ -99,6 +99,7 @@ The ecosystem's architecture is shaped by the following decision records, groupe
 
 Foundational:
 
+* `cpt-frontx-adr-ecosystem-layer-partition` — Partitions the ecosystem into published libraries, templates, and projects orchestration, determines layer membership by property rather than by an authored list of members, and federates artifact ownership so each member owns the artifacts describing itself.
 * `cpt-frontx-adr-artifact-versioning-and-distribution` — Distributes the ecosystem as independently published, per-concern, independently versioned artifacts.
 * `cpt-frontx-adr-core-package-boundaries` — Partitions the Core Framework into boundary-governed concerns (runtime, type-system provider, protocol surface).
 * `cpt-frontx-adr-contract-schema-ownership` — Ends the circular DESIGN↔ADR schema deferral by assigning each owned contract's role to DESIGN, its decision rationale to the ADR, and its concrete field-level schema to the owning FEATURE.
