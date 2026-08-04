@@ -12,6 +12,10 @@
  * 1. Loads each config and verifies it's a valid config array/object
  * 2. Checks that derived configs extend base configs correctly
  * 3. Verifies expected rules are present in each config
+ * 4. Verifies the rules that do exist are still pointed at something — that
+ *    `arch:deps:core` cruises every Core Framework member, and that no
+ *    artifact-registry `[[ignore]]` names a path that is gone. A rule aimed at
+ *    nothing is as silent as a rule that was deleted, and both read as green.
  *
  * Layer *membership* and package.json edges are `npm run arch:edges`
  * (scripts/package-edge-tests.ts), not this script.
@@ -31,7 +35,7 @@
  * and load — ecosystem CI does not lint the template.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -255,6 +259,217 @@ function verifyCoreRestrictions(): TestResult[] {
 }
 
 /**
+ * Verify `arch:deps:core` still cruises exactly the Core Framework membership.
+ *
+ * `layer-constants.cjs` calls itself the single source of truth for layer
+ * membership, and the depcruise rules do derive their path patterns from it —
+ * but the npm script that *invokes* dependency-cruiser names the source roots
+ * literally on the command line, so membership is duplicated there in a place
+ * no rule can see. A package added to `CORE_FRAMEWORK_PACKAGES` and not to the
+ * script gets the layer's rules compiled and then never applied to it: the
+ * cruise passes because that package's files were never in the set being
+ * cruised. That is the shape this whole script exists for, and it is the exact
+ * shape that let `packages/telemetry` land unguarded (#495) — an enumeration
+ * standing in for the membership list, failing open.
+ */
+function verifyCoreCruiseTargets(): TestResult[] {
+  const results: TestResult[] = [];
+
+  try {
+    const { CORE_FRAMEWORK_PACKAGES } = require(
+      join(DEPCRUISE_CONFIG_DIR, 'layer-constants.cjs')
+    ) as { CORE_FRAMEWORK_PACKAGES: readonly string[] };
+
+    const rootPkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')) as {
+      scripts?: Record<string, string>;
+    };
+    const script = rootPkg.scripts?.['arch:deps:core'];
+
+    if (script === undefined) {
+      return [
+        {
+          name: 'arch:deps:core: Script present',
+          passed: false,
+          message:
+            'No `arch:deps:core` script in the root package.json — the Core Framework ' +
+            'import-graph rules have no invocation, so they enforce nothing.',
+        },
+      ];
+    }
+
+    // Positional source roots only: every token shaped like a package src root.
+    // Flags and their values never take this shape.
+    const cruised = script.split(/\s+/).filter((token) => /^packages\/[^/]+\/src$/.test(token));
+    const expected = CORE_FRAMEWORK_PACKAGES.map((name) => `packages/${name}/src`);
+
+    const missing = expected.filter((dir) => !cruised.includes(dir));
+    const extra = cruised.filter((dir) => !expected.includes(dir));
+
+    results.push({
+      name: 'arch:deps:core: Cruises exactly the Core Framework membership',
+      passed: missing.length === 0 && extra.length === 0,
+      message:
+        missing.length === 0 && extra.length === 0
+          ? `All ${expected.length} Core Framework src roots cruised`
+          : [
+              missing.length > 0
+                ? `Not cruised, so unguarded: ${missing.join(', ')}`
+                : undefined,
+              extra.length > 0 ? `Cruised but not a member: ${extra.join(', ')}` : undefined,
+              'Reconcile the `arch:deps:core` script with CORE_FRAMEWORK_PACKAGES in ' +
+                'internal/depcruise-config/layer-constants.cjs.',
+            ]
+              .filter(Boolean)
+              .join('. '),
+    });
+  } catch (error) {
+    results.push({
+      name: 'arch:deps:core: Verification',
+      passed: false,
+      message: `Error: ${(error as Error).message}`,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Every `[[ignore]]` pattern in the Studio artifact registry, in file order.
+ *
+ * A deliberately narrow reader rather than a TOML dependency: it needs one
+ * array from one table kind. Every departure from the shape it expects throws
+ * instead of being skipped, because a parser that silently returned fewer
+ * patterns would make this check pass by finding nothing — the same fail-open
+ * it exists to detect.
+ */
+function ignorePatterns(tomlPath: string): string[] {
+  const patterns: string[] = [];
+  let inIgnoreTable = false;
+  let sawPatterns = false;
+  let pending: string | null = null;
+
+  const collect = (raw: string, lineNo: number): void => {
+    const quoted = raw.match(/"[^"]*"/g);
+    if (quoted === null) {
+      throw new Error(
+        `${tomlPath}:${lineNo}: an [[ignore]] patterns array with no double-quoted entries. ` +
+          `This reader handles double-quoted strings only; extend it rather than letting ` +
+          `patterns go unchecked.`
+      );
+    }
+    patterns.push(...quoted.map((entry) => entry.slice(1, -1)));
+  };
+
+  const lines = readFileSync(tomlPath, 'utf-8').split('\n');
+
+  lines.forEach((line, index) => {
+    const lineNo = index + 1;
+    const text = line.trim();
+
+    if (pending !== null) {
+      pending += text;
+      if (text.includes(']')) {
+        collect(pending, lineNo);
+        pending = null;
+      }
+      return;
+    }
+
+    if (text.startsWith('[')) {
+      // Leaving an [[ignore]] table: it must have carried a patterns array.
+      if (inIgnoreTable && !sawPatterns) {
+        throw new Error(
+          `${tomlPath}:${lineNo}: an [[ignore]] table with no patterns key. The registry's ` +
+            `ignore shape has changed; update this reader.`
+        );
+      }
+      inIgnoreTable = text === '[[ignore]]';
+      sawPatterns = false;
+      return;
+    }
+
+    if (!inIgnoreTable || !/^patterns\s*=/.test(text)) return;
+
+    sawPatterns = true;
+    if (text.includes(']')) {
+      collect(text, lineNo);
+    } else {
+      pending = text;
+    }
+  });
+
+  if (pending !== null) {
+    throw new Error(`${tomlPath}: unterminated patterns array at end of file.`);
+  }
+  if (inIgnoreTable && !sawPatterns) {
+    throw new Error(`${tomlPath}: the final [[ignore]] table has no patterns key.`);
+  }
+
+  return patterns;
+}
+
+/**
+ * Verify no `[[ignore]]` names a path that cannot match anything.
+ *
+ * An ignore is an assertion that some code needs no traceability. Once the code
+ * it named is gone, the entry stops being an assertion and becomes a rule that
+ * can never fire — indistinguishable from an active exemption when read, and
+ * carrying a stale reason nobody will revisit. `packages/docs/*` and
+ * `packages/auth/*` sat here long after both directories were deleted.
+ *
+ * Checked by existence rather than by an expiry date, because a date needs a
+ * human to notice it passed, and the thing that makes these entries rot is
+ * precisely that nobody looks. Only the literal prefix is checked, so the
+ * *structural* ignores — the leading-wildcard patterns for dist, node_modules,
+ * test files, build configs and demos — are correctly left alone: they are
+ * permanent by nature and name no single location. That split is the one
+ * decided for the registry, and it falls out of each pattern's own shape rather
+ * than needing a second list to maintain.
+ */
+function verifyIgnoreFreshness(): TestResult[] {
+  const tomlPath = join(REPO_ROOT, '.cf-studio', 'config', 'artifacts.toml');
+
+  if (!existsSync(tomlPath)) {
+    return [
+      {
+        name: 'Artifact registry: Present',
+        passed: false,
+        message: `Not found: ${tomlPath}`,
+      },
+    ];
+  }
+
+  try {
+    const anchored = ignorePatterns(tomlPath).filter((pattern) => !/^[*?[]/.test(pattern));
+    const stale = anchored.filter((pattern) => {
+      const wildcard = pattern.search(/[*?[]/);
+      const literal = (wildcard === -1 ? pattern : pattern.slice(0, wildcard)).replace(/\/+$/, '');
+      return literal !== '' && !existsSync(join(REPO_ROOT, literal));
+    });
+
+    return [
+      {
+        name: 'Artifact registry: No ignore names a path that is gone',
+        passed: stale.length === 0,
+        message:
+          stale.length === 0
+            ? `All ${anchored.length} path-anchored ignore pattern(s) still name something on disk`
+            : `Stale ignore pattern(s): ${stale.join(', ')} — delete the entry, or correct the ` +
+              `path if the code moved. An ignore for code that no longer exists cannot fire.`,
+      },
+    ];
+  } catch (error) {
+    return [
+      {
+        name: 'Artifact registry: Ignore patterns readable',
+        passed: false,
+        message: (error as Error).message,
+      },
+    ];
+  }
+}
+
+/**
  * Run all verification tests
  */
 async function runVerification(): Promise<void> {
@@ -296,6 +511,17 @@ async function runVerification(): Promise<void> {
     );
   }
 
+  // Guard invocation: rules that exist but are never pointed at anything
+  log('\n🎯 Guard Reach', 'blue');
+  const reachResults = [...verifyCoreCruiseTargets(), ...verifyIgnoreFreshness()];
+  allResults.push(...reachResults);
+  for (const result of reachResults) {
+    log(
+      `${result.passed ? '✅' : '❌'} ${result.name}: ${result.message}`,
+      result.passed ? 'green' : 'red'
+    );
+  }
+
   // Summary
   const passed = allResults.filter((r) => r.passed).length;
   const failed = allResults.filter((r) => !r.passed).length;
@@ -325,4 +551,11 @@ if (isEntryPoint) {
   runVerification();
 }
 
-export { runVerification, verifyEslintConfigs, verifyDepcruiseConfigs, verifyCoreRestrictions };
+export {
+  runVerification,
+  verifyEslintConfigs,
+  verifyDepcruiseConfigs,
+  verifyCoreRestrictions,
+  verifyCoreCruiseTargets,
+  verifyIgnoreFreshness,
+};

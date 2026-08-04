@@ -124,14 +124,29 @@ function resolvePackageDir(pkgName: string): string {
   return path.join(REPO_ROOT, dir);
 }
 
-/** Which layer a package belongs to, for test naming. */
+/**
+ * Which layer a package belongs to, for test naming.
+ *
+ * Throws rather than returning a catch-all, for the same reason
+ * `resolvePackageDir` does. `ECOSYSTEM_PACKAGES` is the concatenation of exactly
+ * the four lists tested here, and `testAllowedEdges` is the only caller, so no
+ * argument can reach the end of this function. The previous
+ * `return 'Unlayered'` looked like the safety net for an unclassified package
+ * and was not one — it was unreachable, while a package on disk that no list
+ * mentions was never visited at all. `testWorkspaceCoverage` is the real
+ * reciprocal check; leaving a dead fallback next to it invites the reader to
+ * believe this function shares the work.
+ */
 function layerOf(pkgName: string): string {
   if (CORE_FRAMEWORK_PACKAGES.includes(pkgName)) return 'Core';
   if (TOOLING_PACKAGES.includes(pkgName)) return 'Tooling';
   if (INTERNAL_TOOLING_PACKAGES.includes(pkgName)) return 'Config';
   // Named, guarded, but no layer asserted yet — see INTERIM_UNCLASSIFIED_PACKAGES.
   if (INTERIM_UNCLASSIFIED_PACKAGES.includes(pkgName)) return 'Layer-pending';
-  return 'Unlayered';
+  throw new Error(
+    `'${pkgName}' is in ECOSYSTEM_PACKAGES but in none of the four membership lists. ` +
+      `The lists and their concatenation have been edited apart in layer-constants.cjs.`
+  );
 }
 
 function readPackageJson(packageDir: string): PackageJson | null {
