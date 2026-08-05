@@ -3,8 +3,6 @@
  *
  * Implements REST API calls using axios.
  * Supports plugin chain for request/response interception.
- *
- * SDK Layer: L1 (Only peer dependency on axios)
  */
 
 // @cpt-flow:cpt-frontx-flow-api-protocol-surface-service-call:p1

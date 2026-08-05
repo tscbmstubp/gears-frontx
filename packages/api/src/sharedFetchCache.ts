@@ -2,7 +2,7 @@
  * Shared fetch cache for protocol-level request reuse across runtime roots.
  *
  * Stored on globalThis so multiple bundle instances in the same realm can
- * converge on one cache without introducing a direct dependency from L1 to L2/L3.
+ * converge on one cache without this package taking a dependency on its consumers.
  */
 // @cpt-algo:cpt-frontx-algo-api-protocol-surface-shared-cache:p1
 // @cpt-state:cpt-frontx-state-api-protocol-surface-fetch-cache-entry:p1

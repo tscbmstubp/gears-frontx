@@ -858,7 +858,7 @@ export type ServiceConstructor<T = BaseApiService> = new () => T;
 
 /**
  * Cache hint options for endpoint descriptors.
- * These map directly to TanStack Query cache settings at the consumer layer (L2+),
+ * These map directly to TanStack Query cache settings in consuming applications,
  * but @gears-frontx/api has no dependency on TanStack — descriptors are plain objects.
  */
 export interface EndpointOptions {

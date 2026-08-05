@@ -6,8 +6,6 @@
  * - REST and SSE protocol support
  * - Plugin system for request/response modification
  * - Mock data support for testing
- *
- * SDK Layer: L1 (Zero @gears-frontx dependencies)
  */
 
 

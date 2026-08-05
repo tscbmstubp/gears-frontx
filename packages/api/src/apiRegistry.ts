@@ -3,8 +3,6 @@
  *
  * Manages service registration, instantiation, and mock mode.
  * Services self-register via module augmentation.
- *
- * SDK Layer: L1 (Zero @gears-frontx dependencies)
  */
 
 

@@ -3,8 +3,6 @@
  *
  * Owns the descriptor contract for cacheable REST endpoints while delegating
  * imperative execution to an injected RestProtocol instance.
- *
- * SDK Layer: L1 (Only peer dependency on axios via RestProtocol)
  */
 
 import {

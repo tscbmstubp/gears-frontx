@@ -3,8 +3,6 @@
  *
  * Manages protocol registration and plugin lifecycle.
  * Services extend this class to implement domain-specific API methods.
- *
- * SDK Layer: L1 (Only peer dependency on axios)
  */
 
 
