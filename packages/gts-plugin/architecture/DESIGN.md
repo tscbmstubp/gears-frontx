@@ -124,6 +124,7 @@ On top of the library's readings the plugin applies write rules of its own. They
 - `registerSchema` refuses a definition the library classifies as an instance.
 - A definition is refused when the library rejects its identifier, and the error carries the library's own reason. It is also refused when the library does not report its identifier as a type.
 - An instance is refused when the library reports its identifier as a type, or when the store holds a type under that identifier.
+- A domain or an extension is refused when an action in one of its lifecycle hooks fails validation against the action's own type. The candidate's own schema checks a hook action only against the base action type. The library matches the candidate's identifier against the domain and extension patterns, names each action's type and validates the action. The plugin only walks the hook list and each chain's `next` and `fallback` links to find the actions.
 - A definition whose content is not representable as JSON is refused, because the plugin keeps a copy of every definition. This refusal concerns storing, not reading GTS.
 
 So the plugin does not accept everything the library accepts. It accepts nothing the library rejects, and each refusal of its own rests on the library's answer or on the need to store a copy.
