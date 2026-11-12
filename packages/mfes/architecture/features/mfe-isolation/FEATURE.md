@@ -155,7 +155,7 @@ Internal system functions that implement the isolation mechanism.
 9. [x] - `p1` - Register an in-flight entry for this filename carrying a lineage seeded from the requesting lineage, and thread that lineage — live, not a snapshot — through this construction and into every dependency it recurses into - `inst-register-inflight`
 10. [x] - `p1` - **IF** the build's failure signal is already raised when this construction begins - `inst-if-failed-at-entry`
     1. [x] - `p1` - **RETURN** without fetching, abandoning work this build will never use - `inst-return-failed-at-entry`
-11. [x] - `p1` - Fetch the chunk source text from the absolute chunk URL using the LRU source-text cache for URL-level deduplication - `inst-fetch-source`
+11. [x] - `p1` - Fetch the chunk source text from the absolute chunk URL using the LRU source-text cache for URL-level deduplication; on rejection, evict the entry — identity-checked against the exact promise this fetch published, so that a late rejection from an abandoned attempt never removes the entry a retry has since published under the same URL — to permit retry - `inst-fetch-source`
 12. [x] - `p1` - **IF** the build's failure signal was raised by another branch while this fetch was in flight - `inst-if-failed-after-fetch`
     1. [x] - `p1` - **RETURN** without minting a blob URL - `inst-return-failed-after-fetch`
 13. [x] - `p1` - Parse all relative static import filenames from the chunk source - `inst-parse-static-imports`
