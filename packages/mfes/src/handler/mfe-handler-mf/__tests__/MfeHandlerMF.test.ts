@@ -56,6 +56,7 @@ vi.mock('../mf-dynamic-module-ops', async (importOriginal) => {
 
 import { MfeHandlerMF } from '../MfeHandlerMF';
 import { LruCache } from '../LruCache';
+import { AttemptSourceTextLedger } from '../AttemptSourceTextLedger';
 import { MfeLoadError } from '../../../errors';
 import type { MfeEntryMF } from '../../../types/mfe-entry-mf';
 import type { MfManifest, MfManifestShared } from '../../../manifest/mf-manifest';
@@ -1131,6 +1132,54 @@ describe('MfeHandlerMF — concurrent dependency fetch', () => {
     expect(sourceTextCache.get(chunkUrl)).toBe(concurrentEntry);
 
     fetchSpy.mockRestore();
+  });
+
+  it('keeps the retry\'s chunk entry when the abandoned attempt\'s fetch rejects late', async () => {
+    // Issue #744. Attempt 1 times out and its ledger releases the chunk
+    // entry, so the retry publishes its own promise under the same URL.
+    // When attempt 1's fetch then fails, its eviction must leave the
+    // retry's entry alone. Otherwise the next caller for that chunk starts
+    // a third fetch instead of joining the retry's.
+    const pending: Array<{ reject: (error: unknown) => void }> = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          pending.push({ reject });
+        })
+    );
+
+    const handler = new MfeHandlerMF(ENTRY_BASE_ID) as unknown as {
+      fetchSourceText(
+        url: string,
+        ledger?: AttemptSourceTextLedger
+      ): Promise<string>;
+    };
+    const chunkUrl = `${PUBLIC_PATH}assets/chunk-a.js`;
+
+    try {
+      const attempt1 = new AttemptSourceTextLedger();
+      const abandoned = handler.fetchSourceText(chunkUrl, attempt1);
+      abandoned.catch(() => {});
+      attempt1.release(); // attempt 1 timed out
+
+      const retry = handler.fetchSourceText(
+        chunkUrl,
+        new AttemptSourceTextLedger()
+      );
+      retry.catch(() => {});
+
+      // Attempt 1's fetch fails after the retry has published its entry.
+      pending[0].reject(new TypeError('network down'));
+      await expect(abandoned).rejects.toThrow(MfeLoadError);
+
+      const third = handler.fetchSourceText(chunkUrl);
+      third.catch(() => {});
+
+      expect(third).toBe(retry);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('never exceeds the configured fetch width for one chain build, however deep and wide the graph', async () => {

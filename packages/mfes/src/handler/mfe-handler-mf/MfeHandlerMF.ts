@@ -2315,7 +2315,16 @@ class MfeHandlerMF extends MfeHandler<MfeEntryMF, ChildMfeBridge> {
         return text;
       })
       .catch((error) => {
-        this.sourceTextCache.delete(absoluteChunkUrl);
+        // Evict on rejection so a failed fetch doesn't poison later loads
+        // of this chunk. Delete the key only while it still maps to THIS
+        // promise: after a timed-out attempt's ledger released it, a retry
+        // may have published its own promise under the same URL, and this
+        // late rejection must not remove that one (issue #744). Same check
+        // as the shared-dependency eviction in `fetchSharedDepSources` and
+        // the ledger's own release.
+        if (this.sourceTextCache.get(absoluteChunkUrl) === fetchPromise) {
+          this.sourceTextCache.delete(absoluteChunkUrl);
+        }
         if (error instanceof MfeLoadError) {
           throw error;
         }
