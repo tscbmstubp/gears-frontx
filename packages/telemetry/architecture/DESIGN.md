@@ -71,7 +71,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-frontx-telemetry-fr-independent-publication` | The package declares its own version, a single entry point built to both module formats, and a published-file allowlist that admits the distribution, readme, license and notice while excluding the demo. The microfrontend reporter adds a second entry point, also built to both module formats. |
 | `cpt-frontx-telemetry-fr-connectors` | `cpt-frontx-telemetry-component-connector-dispatch` holds the connectors supplied at client construction and calls each of them for every record the consent gate passes, synchronously and in the order the records reach the shell's client. A microfrontend's records stay in their own order within and across its payloads, and carry their reported time for sorting. What happens after the call returns is the connector's business, which is what makes delivery best effort. |
 | `cpt-frontx-telemetry-fr-connector-mapping` | The connector contract, `cpt-frontx-telemetry-interface-connector`, is a set of optional handlers: one for a record, a measurement, an identity change, a consent change, a flush request and a shutdown request. Nothing calls the measurement handler until performance measurement, a p2 requirement, is designed. The package hands over its own typed records and never shapes them for a backend, so mapping, batching and transport all live in the connector, as `cpt-frontx-telemetry-constraint-no-backend-knowledge` requires. |
-| `cpt-frontx-telemetry-fr-telemetry-states` | `cpt-frontx-telemetry-component-client` fixes the state at construction. The collector counts as a configured connector unless a new, additive configuration option switches it off; shipped clients keep it on. With the collector off, a record is not queued, drained or posted, whether or not connectors exist. With no connector and the collector off, the client is in the state without a connector; otherwise it is in the state with one. No telemetry means the shell creates no client, which is template wiring. In the state without a connector, a production build's start registers no plugins, installs no listeners and writes nothing to storage, so nothing is captured or stored, and recording calls return at once. The client exposes one value for microfrontends, accepts reports: true when it would record a report, because it is in the state with a connector or is a development build, and false otherwise. The shell publishes that value, and a shell with no client publishes false. The shipped delivery flag keeps its shipped meaning for the collector and plays no part in the state. Until the decision record retires collector delivery, this is a known exception: a client whose only connector is the collector, with delivery switched off, is in the state with a connector yet sends nothing. |
+| `cpt-frontx-telemetry-fr-telemetry-states` | `cpt-frontx-telemetry-component-client` fixes the state at construction. The collector counts as a configured connector unless a new, additive configuration option switches it off; shipped clients keep it on. With the collector off, a record is not queued, drained or posted, whether or not connectors exist. The state comes from three exclusive cases. With no application connector and the collector off, the client is in the state without a connector. With the collector as the only connector and the delivery flag off, the client is outside the three states, in the shipped delivery-suppression mode. In every other case it is in the state with a connector. No telemetry means the shell creates no client, which is template wiring. In the state without a connector, a production build's start registers no plugins, installs no listeners and writes nothing to storage, so nothing is captured or stored, and recording calls return at once. The client exposes one value for microfrontends, accepts reports: one rule: true in the state with a connector, in the delivery-suppression mode, and in development builds, and false otherwise. The shell sets the accepts-reports signal from that value, and a shell with no client sets it to false. The collector counts as a configured connector for these three states and for nothing else. The shipped delivery flag stays outside them. In the delivery-suppression mode the client behaves as shipped, so plugins register, records are enriched and the queue drains, but nothing is posted, and the development no-connector notice is not shown. Accepts reports is true in that mode too, because collection continues. With connectors the application supplies, the flag silences only the collector, and the client is in the state with a connector. The mode is verified by a unit test with the collector as the only connector and the flag off, asserting that records are enriched and drained, nothing is posted, accepts reports is true and no notice is shown. |
 | `cpt-frontx-telemetry-fr-dev-visibility` | `cpt-frontx-telemetry-component-dev-inspector` shows every enriched record locally, keeps a list of records tests can read, and in the state without a connector shows a notice that none is configured. It sits behind a `process.env.NODE_ENV` check that the package build leaves in place, so the consumer's bundler folds the check and drops the inspector from production bundles. The check reads `process.env.NODE_ENV` only through a guard that treats a missing `process` as a production build, so it never throws. Verification: a production bundle of a sample consumer contains no inspector code. |
 | `cpt-frontx-telemetry-fr-declared-events` | The client takes the application's event catalog as a type parameter. Its typed record call accepts only declared names and their data shapes, so a wrong name or shape fails type-checking before the application runs. The shipped untyped `logEvent` keeps working unchanged. |
 | `cpt-frontx-telemetry-fr-event-namespace` | An event name is a list of segments separated by a dot. Events the package defines use the reserved first segment `frontx`, which the catalog type refuses for declared names. A microfrontend's catalog type requires every name to start with that microfrontend's namespace. The report payload marks each entry as a package-defined record or a declared event, and `cpt-frontx-telemetry-component-mfe-receiver` checks both rules again at runtime: it accepts `frontx` names only for package-defined records and only from a fixed list, the flow, dialog, action and error events, and refuses a declared event whose name is in `frontx` or outside the payload's namespace. It keeps one entry identity per namespace, so a second microfrontend claiming a taken namespace is refused. |
@@ -82,12 +82,13 @@ Requirements that significantly influence architecture decisions.
 | `cpt-frontx-telemetry-fr-dialog-events` | `cpt-frontx-telemetry-component-interaction-recorders` records dialog opened and dialog closed under a dialog identity the developer assigns. |
 | `cpt-frontx-telemetry-fr-action-events` | The interaction recorders record a primary or destructive action under an action identity the developer assigns. There is no label parameter, so the visible label cannot become the identity. |
 | `cpt-frontx-telemetry-fr-error-events` | `cpt-frontx-telemetry-component-error-capture` installs the window `error` and `unhandledrejection` listeners in the shell's client only, and offers a call for an error the application caught. An error event carries the kind of error only and belongs to the performance purpose. The microfrontend reporter installs no listeners and forwards only errors its code reports, because the shell's listeners already see a microfrontend's unhandled errors in the shared window. |
-| `cpt-frontx-telemetry-fr-mfe-reporting` | `cpt-frontx-telemetry-component-mfe-reporter` lives in a second entry point and hands batches to `cpt-frontx-telemetry-component-mfe-receiver` on the shell's client. The template wiring binds the reporter's send function to the runtime's existing host-microfrontend actions, so the package never imports the runtime and no new channel exists. |
+| `cpt-frontx-telemetry-fr-mfe-reporting` | `cpt-frontx-telemetry-component-mfe-reporter` lives in a second entry point and hands batches to `cpt-frontx-telemetry-component-mfe-receiver` on the shell's client. The template wiring binds the reporter's send function to a transport the telemetry template registers for the payload, so the package never imports the runtime. |
 | `cpt-frontx-telemetry-fr-mfe-report-scope` | The reporter offers flow, dialog, action and error recording and the microfrontend's declared events, and has no identify, reset or consent operation. The receiver drops any record outside that scope, so a hand-built payload cannot produce one either. |
 | `cpt-frontx-telemetry-fr-mfe-declared-attribution` | The receiver stamps the payload's namespace on every record it accepts, as declared attribution marked as not verified. |
 | `cpt-frontx-telemetry-fr-mfe-no-loss-on-removal` | The reporter hands over what it holds synchronously when the template wiring calls its flush inside the microfrontend's unmount, and on pagehide. The runtime spike showed that a hand-over made synchronously inside unmount arrives, while one scheduled on a timer during unmount is dropped. |
 | `cpt-frontx-telemetry-fr-consent-gate` | `cpt-frontx-telemetry-component-consent-gate` sits between enrichment and connector dispatch. It gives each record a purpose, passes it on only while that purpose is granted, holds it in one bounded first-in-first-out hold while the purpose is unknown, and passes every consent change to connectors at once. Neither the reporter nor the receiver has a path to it. |
-| `cpt-frontx-telemetry-fr-identity-consent` | The consent gate holds an identity the application supplies while analytics is unknown, passes it to connectors as an identity change on grant, and drops it on denial. While analytics is not granted it also keeps the user identifier off the records it passes to connectors. |
+| `cpt-frontx-telemetry-fr-identity-consent` | The consent gate holds an identity the application supplies while analytics is unknown, passes it to connectors as an identity change on grant, and drops it on denial. While analytics is not granted it also removes identifiers from the records it passes to connectors, as `cpt-frontx-telemetry-fr-performance-identifiers` defines below. Both rules apply to connectors the application supplies; the collector path is unchanged. |
+| `cpt-frontx-telemetry-fr-performance-identifiers` | `cpt-frontx-telemetry-component-consent-gate` removes identifiers from every record it passes to dispatch while analytics is not granted, counting unknown as denied unless the application configures otherwise. It removes the user fields (`context_user_id`, `context_user_distinct_id`, `context_user_email`, `context_user_username`, `context_user_first_name`, `context_user_last_name`), the tenant fields (`context_tenant_id`, `context_tenant_name`) and `context_device_id`. The device identifier goes too. This is stricter than the requirement, which names user and tenant identifiers only: the device plugin stores it across sessions, so it would let a performance-only record be joined to earlier analytics records that carried the user identifier. The session fields (`context_session_id`, `context_session_started_time`, `context_session_duration`) stay, and so does `context_user_data`. The built-in device plugin fills it with platform, a mobile-web flag, locale and session length. The gate does not inspect it, so an identifier an application's enrichment hook adds there is the application's responsibility. The gate works on its own copy, so the record the collector queue holds is unchanged, and it applies the removal when it passes a record to dispatch, including held records released after a performance grant while analytics is still not granted. In phase 1 these records are error events; the same rule covers measurements once performance measurement (p2) is designed. The collector path is unchanged, because the requirement limits the gate to connectors the application supplies. Verified by a unit test that an error event passed while only performance is granted carries the session identifier and none of the removed fields, and that the collector's copy is unchanged. |
 
 #### NFR Allocation
 
@@ -98,7 +99,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-frontx-telemetry-nfr-hook-compatibility` | Element-hook contract evolves additively only | `cpt-frontx-telemetry-component-autocapture` | The contract is keyed by a registry symbol whose string is part of the contract, so a semantic change takes a new key rather than a new meaning; permitted attribution fields are allowlisted and reserved-prefix keys are stripped, so the honoured surface is explicit | Inspection at review. No test can observe a future version reinterpreting a current field, which is why this is a review obligation rather than a gate. |
 | `cpt-frontx-telemetry-nfr-server-import-safety` | No throw without `window` | `cpt-frontx-telemetry-component-client` | Start, plugin registration and teardown each return early when `window` is undefined, before any manager is touched | Unit tests exercise the lifecycle in the absence of `window` |
 | `cpt-frontx-telemetry-nfr-connector-isolation` | A failing, stalled or blocked connector affects neither the application nor other connectors | `cpt-frontx-telemetry-component-connector-dispatch` | Each handler call is isolated: a thrown error is caught, and a returned promise gets a rejection handler and is never awaited. Dispatch moves on to the next connector whatever the previous one did, so a stalled request holds nothing up | Unit tests with a connector that throws on every call and one that rejects on every call, asserting zero application errors and every record reaching the other connectors |
-| `cpt-frontx-telemetry-nfr-non-blocking-emission` | Recording never throws, returns nothing to wait on, and holds a bounded number of records | `cpt-frontx-telemetry-component-client`, `cpt-frontx-telemetry-component-consent-gate`, `cpt-frontx-telemetry-component-mfe-reporter` | Every recording surface returns nothing awaitable, under `cpt-frontx-telemetry-principle-recording-never-fails-caller`. The consent hold keeps at most 1000 records, oldest dropped first; a record measures about 1.0 to 1.1 KB serialized, so the hold is about 1.1 MB. The reporter keeps at most 100 records. Records handed to connectors are no longer held by the package; a connector's own buffering is the application's. Two known exceptions last until the decision record retires collector delivery: the shipped collector queue, which this design does not change, is outside this bound; and the shipped delivery flag can leave a client in the state with a connector that sends nothing. With the collector switched off, nothing enters that queue | Unit tests asserting that recording never throws with failing connectors, and that the hold and the reporter buffer stop at their limits and drop the oldest record first |
+| `cpt-frontx-telemetry-nfr-non-blocking-emission` | Recording never throws, returns nothing to wait on, and holds a bounded number of records | `cpt-frontx-telemetry-component-client`, `cpt-frontx-telemetry-component-consent-gate`, `cpt-frontx-telemetry-component-mfe-reporter` | Every recording surface returns nothing awaitable, under `cpt-frontx-telemetry-principle-recording-never-fails-caller`. The consent hold keeps at most 1000 records, oldest dropped first; a record measures about 1.0 to 1.1 KB serialized, so the hold is about 1.1 MB. The reporter keeps at most 100 records. Records handed to connectors are no longer held by the package; a connector's own buffering is the application's. One known exception lasts until the decision record retires collector delivery: the shipped collector queue, which this design does not change, is outside this bound. With the collector switched off, nothing enters that queue | Unit tests asserting that recording never throws with failing connectors, and that the hold and the reporter buffer stop at their limits and drop the oldest record first |
 | `cpt-frontx-telemetry-nfr-unused-cost` | A shell without telemetry carries no capture code; the reporter is small and silent there | `cpt-frontx-telemetry-interface-reporter-entry`, `cpt-frontx-telemetry-component-mfe-reporter`, template wiring | A shell without telemetry creates no client and does not import the main entry, so its bundle has none of this code. The reporter's entry point imports nothing from the client and has a budget of at most 2 kB minified and gzipped. Under `cpt-frontx-telemetry-constraint-silent-without-telemetry`, the reporter sends and prints nothing unless the shell's accepts-reports value is true | A size check in the package build fails when the reporter entry exceeds its budget; unit tests assert zero send calls and zero console output when the accepts-reports value is false |
 
 ### 1.3 Architecture Layers
@@ -132,7 +133,7 @@ graph TD
     Dispatch -->|isolated calls| Connectors[Application connectors]
     Connectors --> Backend[Analytics backend]
     MfeCode[Microfrontend code] --> Reporter[Microfrontend reporter]
-    Reporter -->|payload over runtime actions| Receiver[Microfrontend receiver]
+    Reporter -->|payload over the template's transport| Receiver[Microfrontend receiver]
     Receiver -->|record| Events
 ```
 
@@ -144,7 +145,7 @@ graph TD
 | Enrichment | Every context field, contributed through the event hook | Plugin contract |
 | Declared capture | Flows, dialogs, key actions and errors, recorded through package-defined recorders with no UI framework | TypeScript closures |
 | Connector delivery | The consent gate and connector dispatch, between enrichment and the application's connectors | TypeScript closures, application-supplied connectors |
-| Microfrontend bridge | The reporter inside a microfrontend and the receiver on the shell's client, joined by the runtime's existing host-microfrontend actions | TypeScript, a send function bound by template wiring |
+| Microfrontend bridge | The reporter inside a microfrontend and the receiver on the shell's client, joined by a transport the telemetry template registers | TypeScript, a send function bound by template wiring |
 | Development tooling | The dev inspector, present in development builds only | A `process.env.NODE_ENV` check folded by the consumer's bundler |
 | Browser adapters | Storage keys, DOM predicates, user-agent parsing, scheduling | Browser APIs, one third-party parser |
 
@@ -166,7 +167,7 @@ This matters because the alternative — built-in fields written directly by the
 
 Recording an event and delivering it are joined only by the queue. Collection is synchronous, cannot fail on the caller's behalf, and does not depend on the endpoint being reachable or delivery being enabled. Delivery owns batching policy, envelope construction and the request.
 
-The consequence is deliberate and must be stated wherever the delivery flag is offered: suppressing delivery does not suppress collection. Enrichment still runs, the queue is still drained, and the identifiers the SDK stores are still written. This applies to the collector path, which keeps its shipped behaviour until the decision record retires it. Its consent therefore stays on client start, not on the delivery flag, and the collector is not behind the connector consent gate. Connectors get that gate, `cpt-frontx-telemetry-component-consent-gate`, which decides per record what a connector receives.
+The consequence is deliberate and must be stated wherever the delivery flag is offered: suppressing delivery does not suppress collection. Enrichment still runs, the queue is still drained, and the identifiers the SDK stores are still written. This applies to the collector path, which keeps its shipped behaviour until the decision record retires it. Its consent therefore stays on client start, not on the delivery flag, and `cpt-frontx-telemetry-fr-consent-gate` limits the connector consent gate to connectors the application supplies, so the collector is not behind it. Connectors get that gate, `cpt-frontx-telemetry-component-consent-gate`, which decides per record what a connector receives.
 
 #### Untrusted Extension Code
 
@@ -250,7 +251,7 @@ The impact on the design is that the connector contract carries only the package
 
 - [ ] `p1` - **ID**: `cpt-frontx-telemetry-constraint-silent-without-telemetry`
 
-A microfrontend's reporter **MUST** send nothing and print nothing while its shell has no telemetry. A microfrontend is built separately and cannot know at build time what its shell decided, so the reporter learns it at runtime from the shell's accepts-reports value, which the template wiring supplies. The shell's client exposes that one value: true when the client would record a report, because a connector is configured or it is a development build, and false otherwise. A shell with no client publishes false.
+A microfrontend's reporter **MUST** send nothing and print nothing while its shell has no telemetry. A microfrontend is built separately and cannot know at build time what its shell decided, so the reporter learns it at runtime from the shell's accepts-reports value, which the template wiring supplies. The shell's client exposes that one value: true in the state with a connector, in the delivery-suppression mode, and in development builds, and false otherwise. A shell with no client sets it to false.
 
 The impact on the design is that the reporter holds what it records, within its own bounded buffer, while it has no answer. It sends while the value is true, and drops what it holds and stays silent while the value is false.
 
@@ -276,7 +277,7 @@ The impact on the design is that the reporter holds what it records, within its 
 | Event catalog | The application's declared event names and the shape of each one's data, given to the client as a type parameter; it exists only at type level | Package types, main entry; no source file yet |
 | Connector | An application-written object with optional handlers for a record, a measurement, an identity change, a consent change, a flush request and a shutdown request | Package types, main entry; no source file yet |
 | Consent state | One value per purpose, analytics and performance, each unknown, granted or denied, plus whether records are held while a purpose is unknown | Package types, main entry; no source file yet |
-| Telemetry state | Whether the client has a connector, fixed at construction. From it and the kind of build, the client derives the one value the shell publishes to microfrontends, accepts reports. A shell without telemetry has no client at all | Package types, main entry; no source file yet |
+| Telemetry state | Whether the client has a connector, fixed at construction. From it and the kind of build, the client derives the one value the shell sets as the accepts-reports signal for microfrontends, accepts reports. The collector counts as a connector for the three states only; the delivery flag is outside them. A shell without telemetry has no client at all | Package types, main entry; no source file yet |
 | Flow declaration | A stable flow identity and an ordered list of step identities; a form is a declaration with one step | Package types, both entry points; no source file yet |
 | Attempt | One run through a declared flow: an attempt identity assigned at flow start, the current step, and the monotonic start times of the step and of the attempt. It lives in memory inside its tracker only | Flow tracker module; no source file yet |
 | Report payload | One batch a microfrontend hands to the shell: its namespace, its entry identity and at most 100 records, each marked as a package-defined record or a declared event, with name, data and production time | JSON Schema exported by the main entry as plain data; no source file yet |
@@ -288,7 +289,7 @@ The impact on the design is that the reporter holds what it records, within its 
 - Plugin → Record: a plugin never constructs a record; it mutates one inside the `event` hook.
 - Element-hook result → Record: contributes attribution and data to an autocaptured record only, subject to an allowlist.
 - Event catalog → Record: constrains, at type level, the name and data of a record made through the typed record call; it adds nothing at runtime.
-- Telemetry state → Connector: the state is the state with a connector when at least one connector is supplied or the collector is on.
+- Telemetry state → Connector: the state is the state with a connector when an application connector is supplied, or the collector is on and the delivery flag is not off; with the collector as the only connector and the flag off, the client is outside the three states, in the shipped delivery-suppression mode.
 - Consent state → Record: a record's purpose and the state of that purpose decide whether a connector receives it, waits in the hold, or is dropped.
 - Flow declaration → Attempt: each start of a declared flow opens a new attempt; every flow record carries the attempt identity.
 - Report payload → Record: the receiver turns each accepted payload entry into a record of the shell's client, which assigns its identifier and trigger time and enriches it; the production time travels as a separate reported time.
@@ -346,7 +347,7 @@ Gives the application one object to hold and one lifecycle to manage, and confin
 - Registers the built-in plugins as part of start, after any the caller registered, omitting navigation where configuration switches navigation capture off.
 - Guards every lifecycle method on the presence of `window`.
 - Orders teardown so that session detach precedes plugin teardown hooks, which precede the events manager's flushing teardown.
-- Fixes the telemetry state at construction from the connectors supplied and the collector option, and exposes the accepts-reports value derived from it so the shell can publish it to microfrontends.
+- Fixes the telemetry state at construction from the connectors supplied and the collector option, leaves the shipped delivery flag outside that state, and exposes the accepts-reports value derived from it so the template can set the signal microfrontends read.
 - Builds the consent gate, connector dispatch, error capture and the microfrontend receiver, and in development builds the dev inspector.
 - Creates flow trackers and interaction recorders on the application's call, with itself as their sink.
 - Takes consent changes and the application-supplied identity and passes them to the consent gate, alongside the shipped user-info path.
@@ -369,7 +370,7 @@ Gives the application one object to hold and one lifecycle to manage, and confin
 - `cpt-frontx-telemetry-component-consent-gate` — builds it and passes consent and identity changes to it
 - `cpt-frontx-telemetry-component-connector-dispatch` — builds it with the supplied connectors and triggers its destroy-time flush and shutdown
 - `cpt-frontx-telemetry-component-error-capture` — builds it and has it install its listeners at start
-- `cpt-frontx-telemetry-component-mfe-receiver` — builds it and exposes it for the template's action handler
+- `cpt-frontx-telemetry-component-mfe-receiver` — builds it and exposes it for the template's handler
 - `cpt-frontx-telemetry-component-flow-tracker` — creates trackers that record through it
 - `cpt-frontx-telemetry-component-interaction-recorders` — creates recorders that record through it
 - `cpt-frontx-telemetry-component-dev-inspector` — builds it in development builds only
@@ -393,7 +394,7 @@ Holds everything about how a record becomes a request — identity, enrichment d
 - Issues the request with `keepalive`, and consults the delivery flag only after the queue has been drained.
 - In a production build in the state without a connector, returns before building a record, so nothing is enriched or queued.
 - After enrichment, hands each record to the consent gate as well as to its own queue, and in development builds to the dev inspector. The queue path is unchanged.
-- With the collector switched off, queues, drains and posts nothing, whether or not connectors exist; records still reach the consent gate and, in development builds, the dev inspector.
+- With the collector switched off, queues, drains and posts nothing, whether or not connectors exist; records still reach the consent gate and, in development builds, the dev inspector. With the shipped delivery flag off, still queues and drains and posts nothing, and takes no part in the telemetry state.
 
 ##### Responsibility boundaries — Events Manager
 
@@ -453,7 +454,7 @@ Holds the application-supplied user identity, which has a different lifetime fro
 
 ##### Responsibility boundaries — User Info Manager
 
-- Does NOT affect the device identifier, which is pseudonymous and independent of whether a user is known.
+- Does NOT affect the device identifier, which is pseudonymous and independent of whether a user is known. The consent gate removes it from records passed to connectors while analytics is not granted.
 - Does NOT persist the user identifier, and does NOT retroactively attach it to records already queued.
 
 ##### Related components (by ID) — User Info Manager
@@ -593,12 +594,12 @@ Applies the end user's consent choice at one point, between enrichment and every
 - On grant, passes the held records of that purpose to dispatch in the order they were produced; on denial, drops them.
 - Passes every consent change to connectors at once.
 - Holds an application-supplied identity while analytics is unknown, passes it as an identity change on grant, and drops it on denial.
-- While analytics is not granted, keeps the user identifier off every record it passes to dispatch. It works on its own copy of a record, so the record the collector queue holds is not altered, and removes the identifier when it passes the record to dispatch, including held records released after a grant.
+- While analytics is not granted, removes the user fields, the tenant fields and the device identifier from every record it passes to dispatch, and keeps the session fields (the full list is in the functional driver for `cpt-frontx-telemetry-fr-performance-identifiers`). It works on its own copy of a record, so the record the collector queue holds is not altered, and removes the fields when it passes the record to dispatch, including held records released after a performance grant.
 
 ##### Responsibility boundaries — Consent Gate
 
 - Does NOT decide, ask for or remember consent; the application does and tells the client.
-- Does NOT gate the collector path, whose consent stays on client start.
+- Does NOT gate the collector path, whose consent stays on client start; `cpt-frontx-telemetry-fr-consent-gate` limits the gate to connectors the application supplies.
 - Does NOT accept consent or identity from a microfrontend; neither the reporter nor the receiver has a path to it.
 - Does NOT hold a record after passing it to dispatch.
 
@@ -619,7 +620,7 @@ Makes instrumentation observable while it is being written and testable while it
 ##### Responsibility scope — Dev Inspector
 
 - Exists only behind a `process.env.NODE_ENV` check that the package build leaves in place, so the consumer's bundler folds it and drops the inspector from production bundles. The check goes through a guard that treats a missing `process` as a production build, so it never throws.
-- Shows every enriched record locally, in either telemetry state and whatever the consent state, including a microfrontend's records, which a development build's client accepts in either state.
+- Shows every enriched record locally, in every mode, including the shipped delivery-suppression mode, and whatever the consent state, including a microfrontend's records, which a development build's client accepts in every mode.
 - Keeps a list of the records produced, which tests can read, of at most 1000 records, dropping the oldest first.
 - In the state without a connector, shows a notice that no connector is configured.
 - Shows the receiver's development notices, such as a refused namespace claim.
@@ -749,7 +750,7 @@ Lets a microfrontend report what happens inside it to the shell's telemetry, wit
 
 ##### Related components (by ID) — Microfrontend Reporter
 
-- `cpt-frontx-telemetry-component-mfe-receiver` — hands payloads to it through the runtime's actions
+- `cpt-frontx-telemetry-component-mfe-receiver` — hands payloads to it through the transport the template registers
 - `cpt-frontx-telemetry-component-flow-tracker` — receives its flow records
 - `cpt-frontx-telemetry-component-interaction-recorders` — receives their dialog and action records
 
@@ -763,7 +764,7 @@ Gives microfrontend records one way into the shell's client, where every check r
 
 ##### Responsibility scope — Microfrontend Receiver
 
-- Is exposed on the shell's client; the template's action handler calls it with each payload.
+- Is exposed on the shell's client; the template's handler calls it with each payload.
 - Checks the payload against `cpt-frontx-telemetry-interface-mfe-report-payload`, including its limit of 100 records.
 - Drops records outside what a microfrontend may report.
 - Accepts names in the reserved `frontx` segment only for entries the payload marks as package-defined records, and only from a fixed list: the flow, dialog, action and error events. Refuses a declared event whose name is in `frontx` or outside the payload's namespace.
@@ -778,7 +779,7 @@ Gives microfrontend records one way into the shell's client, where every check r
 - Does NOT change consent or identity.
 - Does NOT deliver records; the client's ordinary path does.
 - Does NOT limit how often a microfrontend sends in phase 1. This is a trust boundary: payload size is capped, but a flooding microfrontend can push the shell's oldest held records out of the consent hold. Verified attribution (p2) is what lets the shell act per sender.
-- Does NOT import the microfrontend runtime; the template's action handler calls it.
+- Does NOT import the microfrontend runtime; the template's handler calls it.
 
 ##### Related components (by ID) — Microfrontend Receiver
 
@@ -835,15 +836,15 @@ Declared capture and connector delivery add one public surface the PRD specifies
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | Connectors | configuration option | The connectors the application supplies, fixed at construction. | unstable |
-| Collector switch | configuration option | Switches the shipped collector off. On by default, so shipped clients behave as before. | unstable |
+| Collector switch | configuration option | Switches the shipped collector off, so nothing is queued or drained; the delivery flag only stops the posting. On by default, so shipped clients behave as before. | unstable |
 | Consent options | configuration option | Whether an unknown purpose counts as granted, and whether records are held while a purpose is unknown. | unstable |
 | Typed record | client method | Records a declared event; accepts only names and data shapes in the application's catalog. | unstable |
 | Flow tracker | client method | Creates a flow tracker from a flow declaration. | unstable |
 | Dialog and action recording | client method | Records dialog opened and closed, and key actions, under developer-assigned identities. | unstable |
 | Error report | client method | Records an error the application caught, by kind only. | unstable |
 | Consent | client method | Sets a purpose to granted or denied, with effect at once. | unstable |
-| Accepts reports | client method | Reads the one value fixed at construction that the shell publishes to microfrontends: true when the client would record a report, because a connector is configured or it is a development build, and false otherwise. | unstable |
-| Report receiver | client method | Accepts one microfrontend report payload; called by the template's action handler. | unstable |
+| Accepts reports | client method | Reads the one value fixed at construction that the shell sets as the accepts-reports signal for microfrontends: true in the state with a connector, in the delivery-suppression mode, and in development builds, and false otherwise. | unstable |
+| Report receiver | client method | Accepts one microfrontend report payload; called by the template's handler. | unstable |
 | Record list | client method, development builds only | The records produced so far, at most 1000, for tests to read. | unstable |
 | Report payload schema | `.` | The payload's JSON Schema as plain data, for the template to register in the runtime's type system. | unstable |
 | Reporter factory | second entry point | Creates a microfrontend reporter; see `cpt-frontx-telemetry-interface-reporter-entry`. | unstable |
@@ -864,13 +865,13 @@ The reporter's operations are: record flow progress, dialogs, key actions and er
 
 The payload one reporter hands to the shell per batch. It carries the microfrontend's namespace, its entry identity, and at most 100 records. Each entry is marked as a package-defined record or a declared event, and carries its name, its data and the time it was produced. It carries no record identifier, no enrichment and no consent or identity.
 
-The reporter writes it and the receiver reads it, and the two can come from different versions of this package, because a microfrontend is built and deployed separately from its shell. The payload therefore evolves by addition only, under `cpt-frontx-telemetry-principle-additive-cross-version`. The package exports the payload's JSON Schema as plain data, and the template registers the action type that carries it in the runtime's type system. Exact field names belong in a FEATURE.
+The reporter writes it and the receiver reads it, and the two can come from different versions of this package, because a microfrontend is built and deployed separately from its shell. The payload therefore evolves by addition only, under `cpt-frontx-telemetry-principle-additive-cross-version`. The package exports the payload's JSON Schema as plain data, and the template registers the payload's schema with whatever transport it uses. Exact field names belong in a FEATURE.
 
 ### 3.4 Internal Dependencies
 
 None. The package imports no other package in this ecosystem, which is the property recorded in `cpt-frontx-telemetry-constraint-standalone-boundary` and enforced in root configuration.
 
-Microfrontend reporting does not change this. The reporter reaches the microfrontend runtime only through a send function the template wiring supplies, and the receiver is called by an action handler the template registers. The package never imports the runtime.
+Microfrontend reporting does not change this. The reporter reaches the microfrontend runtime only through a send function the template wiring supplies, and the receiver is called by a handler the template registers. The package never imports the runtime.
 
 **Dependency Rules** (per project conventions):
 - No circular dependencies
@@ -898,9 +899,9 @@ The package reaches an analytics backend only through connectors the application
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| Host-microfrontend actions | A send function bound by the template to an actions chain, and an action handler in the shell that calls the receiver | Carries `cpt-frontx-telemetry-interface-mfe-report-payload` from a microfrontend to the shell. The runtime validates each hand-over, which costs about 1 to 2 ms whatever the batch size. |
-| Shared property | The shell's accepts-reports value, which the template publishes and supplies to the reporter | Tells the reporter whether the shell would record its reports. A shell with no client publishes false. |
-| Runtime type system | The payload's JSON Schema, registered by the template | Lets the runtime accept the action that carries the payload. |
+| Payload transport | A send function bound by the template to a transport the telemetry template registers, and a handler in the shell that calls the receiver | Carries `cpt-frontx-telemetry-interface-mfe-report-payload` from a microfrontend to the shell. The template adds nothing to the shell template's base domains. When the transport is the runtime's actions, the runtime validates each hand-over at about 1 to 2 ms whatever the batch size, which is why the reporter batches up to 100 records per payload. |
+| Accepts-reports signal | A signal the shell's base domains carry whether or not telemetry is present; the telemetry template sets it from the client's value and supplies it to the reporter | Tells the reporter whether the shell would record its reports. In a shell without telemetry it is false, so the reporter gets an answer and drops its buffer instead of holding forever. |
+| Payload schema registration | The payload's JSON Schema, registered by the template with its transport | Lets the transport accept the payload. |
 
 #### Browser Runtime
 
@@ -1050,8 +1051,8 @@ sequenceDiagram
     participant Mfe as Microfrontend code
     participant Rep as Microfrontend reporter
     participant State as Accepts-reports source
-    participant Rt as Runtime actions
-    participant H as Template action handler
+    participant Rt as Template transport
+    participant H as Template handler
     participant Rcv as Microfrontend receiver
     participant Ev as Shell client events manager
     Mfe->>Rep: record a flow event
@@ -1066,7 +1067,7 @@ sequenceDiagram
     else accepts reports is true
         Note over Rep: hand-over on timer, at 100 records, inside unmount, or on pagehide
         Rep->>Rt: send one payload
-        Rt->>H: action carrying the payload
+        Rt->>H: the payload
         H->>Rcv: payload
         Rcv->>Rcv: check shape, size and namespace owner
         Rcv->>Rcv: drop out-of-scope records
@@ -1080,7 +1081,7 @@ sequenceDiagram
     end
 ```
 
-**Description**: How a record produced inside a microfrontend reaches the shell's connectors. Until the shell's accepts-reports value arrives, the reporter holds at most 100 records, dropping the oldest, and then sends or drops them by the answer. The reporter batches because each hand-over costs the runtime about the same whatever its size. It hands over synchronously inside unmount, because the runtime spike showed that a hand-over scheduled on a timer during unmount is dropped. Once inside the shell, a reported record is checked, attributed as declared, and then follows the same path as the shell's own records, so consent and connectors apply without a second implementation.
+**Description**: How a record produced inside a microfrontend reaches the shell's connectors. Until the shell's accepts-reports value arrives, the reporter holds at most 100 records, dropping the oldest, and then sends or drops them by the answer. The reporter batches because, when the transport is the runtime's actions, each hand-over costs about the same whatever its size. It hands over synchronously inside unmount, because the runtime spike showed that a hand-over scheduled on a timer during unmount is dropped. Once inside the shell, a reported record is checked, attributed as declared, and then follows the same path as the shell's own records, so consent and connectors apply without a second implementation.
 
 #### Flow Attempt
 
@@ -1139,7 +1140,7 @@ The package is extracted from an internal codebase that is already in production
 The design splits the work between this package and the templates repository:
 
 - Built in this package: everything in sections 1 to 3, including the reporter's second entry point and the payload's JSON Schema.
-- Built in the templates repository, in the telemetry template and the microfrontend template: creating the client and the place for connectors in the shell; registering the action type that carries the payload; listing that action in each hosting domain's actions and registering a handler that calls the receiver; publishing the accepts-reports value to microfrontends as a shared property; creating the reporter in a microfrontend, binding its send function to the runtime's communication and calling its flush inside unmount; framework bindings such as a form binding and an error boundary; and lint rules shipped to projects.
+- Built in the templates repository, in the telemetry template and the microfrontend template: creating the client and the place for connectors in the shell; registering a transport of its own for the payload and a handler that calls the receiver; setting the accepts-reports signal the base domains carry; creating the reporter in a microfrontend, binding its send function to the runtime's communication and calling its flush inside unmount; framework bindings such as a form binding and an error boundary; and lint rules shipped to projects.
 - No other ecosystem member changes for these requirements.
 
 The context diagram shows who builds each piece and how the pieces meet.
@@ -1155,20 +1156,20 @@ graph LR
     Runtime["Microfrontend runtime, an existing ecosystem member, unchanged"]
     Conn["Application connectors, written by the application"]
     ShellT -->|creates the client, supplies connectors| Client
-    ShellT -->|publishes accepts reports as a shared property| Runtime
+    ShellT -->|sets the accepts-reports signal on the shell's base domains| Runtime
     MfeT -->|creates the reporter, binds its send function, calls flush in unmount| Reporter
-    Runtime -->|accepts-reports value| Reporter
+    Runtime -->|accepts-reports signal| Reporter
     Reporter -->|payload through the send function| Runtime
-    Runtime -->|action to the handler the shell template registers| ShellT
+    Runtime -->|payload through the transport the telemetry template registers| ShellT
     ShellT -->|calls the receiver| Client
     Client -->|isolated calls| Conn
 ```
 
-One constraint sits on that template work. The shell template declares the shell's base domains with fixed lists of actions and shared properties, so the telemetry template needs a way to add its action and its shared property to them. How it does so is open in the templates repository's telemetry decision record.
+Two constraints sit on that template work. First, the telemetry template registers its own transport for the payload and adds nothing to the shell template's base domains. Second, accepts reports is a signal the shell's base domains carry whether or not telemetry is present; the telemetry template sets it from the client's value, and in a shell without telemetry it is false. How the transport and the signal are built is settled in the templates repository's telemetry decision record.
 
 The bounds in this design come from measurement where one exists. One enriched record from the current client serializes to about 1.0 to 1.1 KB. Envelope version 1 carries full records; version 2 lifts common fields into the batch, so a record costs about 0.25 to 0.32 KB in the request, but a record is still held in full in memory. The 1000-record consent hold is therefore about 1.1 MB serialized. The 100-record payload limit comes from the runtime spike's cost probe: the cost per record falls from about 1.75 ms with one record per hand-over to about 0.02 ms with 100. The reporter's 2 kB budget is the limit `cpt-frontx-telemetry-nfr-unused-cost` asks this design to fix. These choices follow from the PRD, the decision record and the spike, so they need no decision record of their own.
 
-The p2 and p3 requirements, `cpt-frontx-telemetry-fr-event-inventory`, `cpt-frontx-telemetry-fr-list-tab-events`, `cpt-frontx-telemetry-fr-mfe-verified-attribution`, `cpt-frontx-telemetry-fr-performance-identifiers`, `cpt-frontx-telemetry-fr-performance-opt-in`, `cpt-frontx-telemetry-fr-page-performance`, `cpt-frontx-telemetry-fr-part-timing`, `cpt-frontx-telemetry-fr-raw-measurements` and `cpt-frontx-telemetry-fr-measurement-sampling`, are not designed here; they are designed when their phase starts. Verified attribution also waits on the microfrontend runtime telling the shell who is sending, which is proposed in that member's PRD.
+The p2 and p3 requirements, `cpt-frontx-telemetry-fr-event-inventory`, `cpt-frontx-telemetry-fr-list-tab-events`, `cpt-frontx-telemetry-fr-mfe-verified-attribution`, `cpt-frontx-telemetry-fr-performance-opt-in`, `cpt-frontx-telemetry-fr-page-performance`, `cpt-frontx-telemetry-fr-part-timing`, `cpt-frontx-telemetry-fr-raw-measurements` and `cpt-frontx-telemetry-fr-measurement-sampling`, are not designed here; they are designed when their phase starts. Verified attribution also waits on the microfrontend runtime telling the shell who is sending, which is proposed in that member's PRD.
 
 Several areas a server-side design covers do not apply to a client-side library. Server scaling does not apply, because the package runs inside each end user's browser and holds no shared service. Authentication does not apply, because the package sends nothing under its own identity; a connector authenticates to its backend as the application decides. Deployment does not apply, because the package ships as a versioned dependency that each application bundles and releases with its own code. Operations do not apply, because the package runs no process of its own to monitor. Recovery does not apply, because the package keeps nothing that must survive a failure beyond the two browser-storage keys, and a lost record is accepted under best-effort delivery.
 
