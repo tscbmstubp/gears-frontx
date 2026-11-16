@@ -661,7 +661,7 @@ Gives forms and multi-step flows one vocabulary, so every flow yields the same e
 - Does NOT listen to page visibility or unload, so it never records an abandonment.
 - Does NOT accept an entered value or a message text.
 - Does NOT follow a journey from one microfrontend into another; each records its own flow.
-- Does NOT bind to a UI framework; a form binding lives in the templates repository.
+- Does NOT bind to a UI framework; a form binding lives outside this package, as section 4 describes.
 
 ##### Related components (by ID) — Flow Tracker
 
@@ -715,7 +715,7 @@ Records that an error happened, so a drop-off in a flow can be explained, withou
 - Does NOT carry an error's message or stack trace.
 - Does NOT exist in the microfrontend reporter. Microfrontends run in the shell's window, so the shell's listeners already see their unhandled errors; the reporter forwards only errors its code reports, and no error is counted twice.
 - Does NOT group, trace or rate errors.
-- Does NOT replace a UI framework's error boundary; that binding lives in the templates repository and reports through the call above.
+- Does NOT replace a UI framework's error boundary; that binding lives outside this package, as section 4 describes, and reports through the call above.
 
 ##### Related components (by ID) — Error Capture
 
@@ -1140,8 +1140,9 @@ The package is extracted from an internal codebase that is already in production
 The design splits the work between this package and the templates repository:
 
 - Built in this package: everything in sections 1 to 3, including the reporter's second entry point and the payload's JSON Schema.
-- Built in the templates repository, in the telemetry template and the microfrontend template: creating the client and the place for connectors in the shell; registering a transport of its own for the payload and a handler that calls the receiver; setting the accepts-reports signal the base domains carry; creating the reporter in a microfrontend, binding its send function to the runtime's communication and calling its flush inside unmount; framework bindings such as a form binding and an error boundary; and lint rules shipped to projects.
-- No other ecosystem member changes for these requirements.
+- Built in the templates repository, in the telemetry template and the microfrontend template: creating the client and the place for connectors in the shell; registering a transport of its own for the payload and a handler that calls the receiver; setting the accepts-reports signal the base domains carry; creating the reporter in a microfrontend, binding its send function to the transport the telemetry template registers and calling its flush inside unmount; the shell's framework bindings, a form binding and an error boundary; and lint rules shipped to projects.
+- Not settled here: where the framework bindings that microfrontend packages use are built. Those packages must build without the telemetry template, so they cannot import the shell's bindings. The bindings go either in a framework-level binding library in this repository, beside this package, or in code the microfrontend template carries itself. The templates repository's telemetry decision record makes that choice.
+- No existing ecosystem member changes for these requirements; the binding library, if chosen, is a new one.
 
 The context diagram shows who builds each piece and how the pieces meet.
 
@@ -1153,7 +1154,7 @@ graph LR
     end
     ShellT["Shell telemetry template, built in the templates repository"]
     MfeT["Microfrontend template, built in the templates repository"]
-    Runtime["Microfrontend runtime, an existing ecosystem member, unchanged"]
+    Runtime["Microfrontend runtime, an existing ecosystem member, unchanged; hosts the transport and signal the templates register"]
     Conn["Application connectors, written by the application"]
     ShellT -->|creates the client, supplies connectors| Client
     ShellT -->|sets the accepts-reports signal on the shell's base domains| Runtime
