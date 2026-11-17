@@ -85,7 +85,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-frontx-telemetry-fr-mfe-reporting` | `cpt-frontx-telemetry-component-mfe-reporter` lives in a second entry point and hands batches to `cpt-frontx-telemetry-component-mfe-receiver` on the shell's client. The template wiring binds the reporter's send function to a transport the telemetry template registers for the payload, so the package never imports the runtime. |
 | `cpt-frontx-telemetry-fr-mfe-report-scope` | The reporter offers flow, dialog, action and error recording and the microfrontend's declared events, and has no identify, reset or consent operation. The receiver drops any record outside that scope, so a hand-built payload cannot produce one either. |
 | `cpt-frontx-telemetry-fr-mfe-declared-attribution` | The receiver stamps the payload's namespace on every record it accepts, as declared attribution marked as not verified. |
-| `cpt-frontx-telemetry-fr-mfe-no-loss-on-removal` | The reporter hands over what it holds synchronously when the template wiring calls its flush inside the microfrontend's unmount, and on pagehide. The runtime spike showed that a hand-over made synchronously inside unmount arrives, while one scheduled on a timer during unmount is dropped. |
+| `cpt-frontx-telemetry-fr-mfe-no-loss-on-removal` | The reporter hands over what it holds synchronously when the template wiring calls its flush inside the microfrontend's unmount, when the page becomes hidden, and on pagehide. The runtime spike showed that a hand-over made synchronously inside unmount arrives, while one scheduled on a timer during unmount is dropped. A payload the shell handles while the page is hidden is followed by another connector flush, so records handed over after the shell's own page-hide flush still get one. Verified by unit tests that the reporter hands over when the page becomes hidden, and that a payload handled while the page is hidden is followed by a flush request to every connector. |
 | `cpt-frontx-telemetry-fr-consent-gate` | `cpt-frontx-telemetry-component-consent-gate` sits between enrichment and connector dispatch. It keeps the state the application sets for each purpose and works from the effective state: when the application configures that a purpose it has not set counts as granted, an unknown purpose is effectively granted, so the gate has no unknown state and holds nothing. It gives each record a purpose, passes it on only while that purpose is effectively granted, holds it in one bounded first-in-first-out hold while the purpose is effectively unknown, and passes every change of the effective state to connectors at once. Neither the reporter nor the receiver has a path to it. Verified by a unit test that, with that configuration and no consent set, a test connector receives records and the identity at once and nothing is held. |
 | `cpt-frontx-telemetry-fr-identity-consent` | The consent gate follows the effective state of analytics: it holds an identity the application supplies while analytics is unknown, passes it to connectors as an identity change on grant, and drops it on denial. With an unset purpose configured to count as granted, it passes the identity at once. While analytics is not granted it also removes identifiers from the records it passes to connectors, as `cpt-frontx-telemetry-fr-performance-identifiers` defines below. Both rules apply to connectors the application supplies; the collector path is unchanged. |
 | `cpt-frontx-telemetry-fr-performance-identifiers` | `cpt-frontx-telemetry-component-consent-gate` removes identifiers from every record it passes to dispatch while the effective state of analytics, as the `cpt-frontx-telemetry-fr-consent-gate` row defines it, is not granted. It removes the user fields (`context_user_id`, `context_user_distinct_id`, `context_user_email`, `context_user_username`, `context_user_first_name`, `context_user_last_name`), the tenant fields (`context_tenant_id`, `context_tenant_name`) and `context_device_id`. The device identifier goes too. This is stricter than the requirement, which names user and tenant identifiers only: the device plugin stores it across sessions, so it would let a performance-only record be joined to earlier analytics records that carried the user identifier. The session fields (`context_session_id`, `context_session_started_time`, `context_session_duration`) stay, and so does `context_user_data`. The built-in device plugin fills it with platform, a mobile-web flag, locale and session length. The gate does not inspect it, so an identifier an application's enrichment hook adds there is the application's responsibility. The gate works on its own copy, so the record the collector queue holds is unchanged, and it applies the removal when it passes a record to dispatch, including held records released after a performance grant while analytics is still not granted. In phase 1 these records are error events; the same rule covers measurements once performance measurement (p2) is designed. The collector path is unchanged, because the requirement limits the gate to connectors the application supplies. Verified by a unit test that an error event passed while only performance is granted carries the session identifier and none of the removed fields, and that the collector's copy is unchanged. |
@@ -563,7 +563,7 @@ Gives every connector every record it may receive, and keeps the failures of app
 - Calls each connector's record handler for every record the consent gate passes, synchronously, in the order the records reach the shell's client.
 - Passes identity changes, consent changes, flush requests and shutdown requests to every connector that has the matching handler; a connector without that handler is skipped for that signal.
 - Isolates each call: catches a thrown error, and attaches a rejection handler to a returned promise without awaiting it.
-- Requests a flush from every connector when the page becomes hidden and on pagehide; on pagehide, the request comes after the shell has handled the microfrontend hand-overs it has already received. On destroy the client has it request a flush and then a shutdown.
+- Requests a flush from every connector synchronously inside the handlers for the page becoming hidden and for pagehide, so a connector can still start a request before the handler returns. No shutdown follows when the page closes, so that flush may be a connector's last call. When the receiver asks after handling a microfrontend payload while the page is hidden, it requests the flush again. On destroy the client has it request a flush and then a shutdown.
 
 ##### Responsibility boundaries — Connector Dispatch
 
@@ -576,6 +576,7 @@ Gives every connector every record it may receive, and keeps the failures of app
 
 - `cpt-frontx-telemetry-component-consent-gate` — receives granted records, identity changes and consent changes from it
 - `cpt-frontx-telemetry-component-client` — built by it, and told by it to flush and shut down on destroy
+- `cpt-frontx-telemetry-component-mfe-receiver` — asked by it for another flush after a payload handled while the page is hidden
 
 #### Consent Gate
 
@@ -737,7 +738,7 @@ Lets a microfrontend report what happens inside it to the shell's telemetry, wit
 - Is created by the template wiring with the microfrontend's namespace, its entry identity, a send function and a source for the shell's accepts-reports value.
 - Offers flow, dialog, action and error recording, and the microfrontend's declared events, typed by a catalog whose names start with its namespace.
 - Stamps each record with the time it was produced.
-- Buffers at most 100 records and hands them over as one payload per batch: on a short timer, when the buffer reaches 100, synchronously when its flush is called inside the microfrontend's unmount, and on pagehide.
+- Buffers at most 100 records and hands them over as one payload per batch: on a short timer, when the buffer reaches 100, synchronously when its flush is called inside the microfrontend's unmount, when the page becomes hidden, and on pagehide.
 - Holds what it records while the source has no answer, keeping at most 100 records and dropping the oldest first. It sends while the value is true, and drops what it holds and stays silent while the value is false.
 
 ##### Responsibility boundaries — Microfrontend Reporter
@@ -771,6 +772,7 @@ Gives microfrontend records one way into the shell's client, where every check r
 - Keeps one entry identity per namespace and refuses a payload from a different entry that claims a namespace already taken, with a development notice.
 - Stamps the namespace on each accepted record as declared attribution, marked as not verified.
 - Records each accepted record through the client. The shell assigns the record identifier and the trigger time on receipt, as for any record. The production time the reporter assigned travels as a separate reported time, marked as declared by the microfrontend, like the namespace.
+- After recording a payload's accepted records while the page is hidden, asks connector dispatch for another flush. A reporter's page-hide hand-over usually arrives after the shell's own page-hide flush, because the shell registers its listeners first.
 - After the client is destroyed, drops every payload silently.
 
 ##### Responsibility boundaries — Microfrontend Receiver
@@ -785,6 +787,7 @@ Gives microfrontend records one way into the shell's client, where every check r
 
 - `cpt-frontx-telemetry-component-mfe-reporter` — receives its payloads
 - `cpt-frontx-telemetry-component-events-manager` — records accepted records through it
+- `cpt-frontx-telemetry-component-connector-dispatch` — asks it for another flush after a payload handled while the page is hidden
 - `cpt-frontx-telemetry-component-dev-inspector` — shows its development notices
 - `cpt-frontx-telemetry-component-client` — exposed on it
 
@@ -829,7 +832,7 @@ Declared capture and connector delivery add one public surface the PRD specifies
 
 | Public surface | Realized by | Notes |
 |----------------|-------------|-------|
-| `cpt-frontx-telemetry-interface-connector` | `cpt-frontx-telemetry-component-connector-dispatch`, `cpt-frontx-telemetry-component-consent-gate` | The connector type: optional handlers for a record, a measurement, an identity change, a consent change, a flush request and a shutdown request. Nothing calls the measurement handler until performance measurement is designed. Dispatch decides when each is called and the gate decides what reaches it. |
+| `cpt-frontx-telemetry-interface-connector` | `cpt-frontx-telemetry-component-connector-dispatch`, `cpt-frontx-telemetry-component-consent-gate` | The connector type: optional handlers for a record, a measurement, an identity change, a consent change, a flush request and a shutdown request. Nothing calls the measurement handler until performance measurement is designed. Dispatch decides when each is called and the gate decides what reaches it. A flush request comes synchronously inside the handler for the page becoming hidden or for pagehide, and no shutdown follows when the page closes, so that flush may be a connector's last call. Anything a connector sends then with `keepalive` or as a beacon shares the browser's 64 KiB allowance for such requests in flight with every other one from the page, the collector's drain on page hide included. How to send at that moment is documented on the flush handler and in the connection guide. |
 
 **Endpoints Overview**:
 
@@ -893,7 +896,7 @@ The package reaches an analytics backend only through connectors the application
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| Application connectors | `cpt-frontx-telemetry-interface-connector` | Delivery to whichever backend the deployment chose. Mapping, batching and transport are the connector's; the package only calls its handlers. |
+| Application connectors | `cpt-frontx-telemetry-interface-connector` | Delivery to whichever backend the deployment chose. Mapping, batching and transport are the connector's; the package only calls its handlers. A flush on page hide may be the last call a connector gets, as the connector contract describes. |
 
 #### Microfrontend Runtime Through Template Wiring
 
@@ -914,7 +917,7 @@ The package reaches an analytics backend only through connectors the application
 | `Intl.Locale` | Locale normalization | Normalizing the application's locale to a standard tag |
 | History API events | `pushState`, `replaceState`, `popstate` | Navigation plugin's path-change detection |
 | Window error events | `error`, `unhandledrejection` | Error capture in the shell's client |
-| Page lifecycle events | `pagehide`, visibility state | Connector flush requests, and the reporter's last hand-over |
+| Page lifecycle events | `pagehide`, visibility state | Connector flush requests, and the reporter's hand-overs when the page becomes hidden and on pagehide |
 | Monotonic clock | `performance.now` | Step and attempt timing in the flow tracker |
 
 #### User-Agent Parser
@@ -1065,7 +1068,7 @@ sequenceDiagram
     alt accepts reports is false
         Rep->>Rep: drop what it holds and stay silent
     else accepts reports is true
-        Note over Rep: hand-over on timer, at 100 records, inside unmount, or on pagehide
+        Note over Rep: hand-over on timer, at 100 records, inside unmount, when the page becomes hidden, or on pagehide
         Rep->>Rt: send one payload
         Rt->>H: the payload
         H->>Rcv: payload
@@ -1078,10 +1081,13 @@ sequenceDiagram
             Rcv->>Ev: record, with its reported time as a separate field
         end
         Ev->>Ev: assign identifier and trigger time, enrich, then collector queue and consent gate
+        opt the page is hidden
+            Rcv->>Rcv: ask connector dispatch for another flush
+        end
     end
 ```
 
-**Description**: How a record produced inside a microfrontend reaches the shell's connectors. Until the shell's accepts-reports value arrives, the reporter holds at most 100 records, dropping the oldest, and then sends or drops them by the answer. The reporter batches because, when the transport is the runtime's actions, each hand-over costs about the same whatever its size. It hands over synchronously inside unmount, because the runtime spike showed that a hand-over scheduled on a timer during unmount is dropped. Once inside the shell, a reported record is checked, attributed as declared, and then follows the same path as the shell's own records, so consent and connectors apply without a second implementation.
+**Description**: How a record produced inside a microfrontend reaches the shell's connectors. Until the shell's accepts-reports value arrives, the reporter holds at most 100 records, dropping the oldest, and then sends or drops them by the answer. The reporter batches because, when the transport is the runtime's actions, each hand-over costs about the same whatever its size. It hands over synchronously inside unmount, because the runtime spike showed that a hand-over scheduled on a timer during unmount is dropped. It also hands over when the page becomes hidden, the last page event a browser reliably delivers, especially on mobile, and again on pagehide. The shell usually handles both events before its microfrontends do, because it registers its listeners first, so a payload that arrives while the page is hidden is followed by another connector flush. Once inside the shell, a reported record is checked, attributed as declared, and then follows the same path as the shell's own records, so consent and connectors apply without a second implementation.
 
 #### Flow Attempt
 
