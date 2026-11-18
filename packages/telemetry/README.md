@@ -108,10 +108,11 @@ it cannot be started again.
 
 All methods except `logEvent`, `record`, `acceptsReports`, `getRecords` and `destroy` are chainable.
 
-`acceptsReports()` is `true` when the client has a connector, when the collector runs with
-`enabled: false` (records are drained but not posted), or in a development build; it is `false`
-otherwise. It never changes during the client's life, so a caller can check it once to decide
-whether to build an expensive report at all.
+`acceptsReports()` is `false` only in a production build whose client has no application
+connector and the collector switched off; it is `true` in every other case: an application
+connector, the collector on whatever `enabled` is (with `enabled: false` records are drained but
+not posted), or any development build. It never changes during the client's life, so a caller
+can check it once to decide whether to build an expensive report at all.
 
 Register plugins before `start()`. `setup()` runs inside `start()`, so a plugin passed to
 `plugin()` afterwards is stored and never set up.

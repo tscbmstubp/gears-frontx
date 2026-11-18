@@ -24,7 +24,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/check-builds.mjs",
     "type-check": "tsc --noEmit",
     "type-check:test": "tsc -p tsconfig.test.json",
     "type-check:demo": "tsc -p demo/tsconfig.json",

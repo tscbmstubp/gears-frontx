@@ -311,6 +311,58 @@ describe.each<BuildKind>(['production', 'development'])('lifecycle (%s)', (build
     ]);
   });
 
+  it('destroy from a connector during start leaves no history wrapper behind', () => {
+    const store = new Map<string, string>();
+    const freshStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: vi.fn((key: string, value: string) => void store.set(key, value)),
+      removeItem: (key: string) => void store.delete(key),
+      clear: () => store.clear(),
+      key: (index: number) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+    };
+    vi.stubGlobal('localStorage', freshStorage);
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+    onTestFinished(() => {
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ref: { client?: ReturnType<typeof createTelemetryWithBuildKind> } = {};
+    const telemetry = createTelemetryWithBuildKind(
+      {
+        ...baseConfig,
+        navigationCapture: true,
+        verbose: true,
+        connectors: [
+          fakeConnector('a', [], {
+            onRecord: (record) => {
+              if (record.name === 'session_start') ref.client?.destroy();
+            },
+          }),
+        ],
+      },
+      buildKind,
+    );
+    ref.client = telemetry;
+
+    expect(() => telemetry.start()).not.toThrow();
+    expect(window.history.pushState).toBe(originalPushState);
+    expect(window.history.replaceState).toBe(originalReplaceState);
+
+    freshStorage.setItem.mockClear();
+    window.history.pushState({}, '', '/after-destroy');
+
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining('Telemetry has been destroyed'),
+      expect.anything(),
+    );
+    expect(freshStorage.setItem).not.toHaveBeenCalled();
+  });
+
   it('destroy on a never-started client calls no connector', () => {
     const calls: Call[] = [];
     const telemetry = connected(calls);

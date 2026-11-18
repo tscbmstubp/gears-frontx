@@ -106,6 +106,10 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
   // @cpt-end:cpt-frontx-telemetry-flow-event-collection-instrument:p1:inst-construct-managers
   // Starts CREATED: no listener installed and no plugin set up until `start()` runs.
   let lifecycle: 'created' | 'started' | 'destroyed' = 'created';
+  // A connector handler may call `destroy()` while `start()` is running: dispatch is open before
+  // the shipped start steps, which already make records. Read through a function so the check is
+  // not narrowed away by the `lifecycle = 'started'` assignment in `start()`.
+  const destroyedDuringStart = () => lifecycle === 'destroyed';
 
   // @cpt-begin:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-return-connected
   return rootApi;
@@ -299,20 +303,62 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
       autocapturePlugin(),
     );
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-register-builtins
+    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    if (destroyedDuringStart()) {
+      return rootApi;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
     // @cpt-begin:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-start-session
     sessionManager.start();
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-start-session
+    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    if (destroyedDuringStart()) {
+      return rootApi;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
     // @cpt-begin:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-start-events
     eventsManager.start();
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-start-events
+    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    if (destroyedDuringStart()) {
+      return rootApi;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
     // @cpt-begin:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-setup-plugins
     pluginsManager.setup();
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-setup-plugins
+    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    if (destroyedDuringStart()) {
+      return rootApi;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
     // @cpt-begin:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-refresh-session
     sessionManager.refreshSession();
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-refresh-session
+    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    if (destroyedDuringStart()) {
+      return rootApi;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
     // @cpt-begin:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-call-start-hooks
-    hooks.callHooksSync('start');
+    // Every start hook runs and the first error is rethrown after the loop, as `callHooksSync`
+    // does, except that a client destroyed by a connector handler calls no further start hook.
+    let startHookError: unknown = undefined;
+    for (const startHook of hooks.getHooks('start')) {
+      // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+      if (destroyedDuringStart()) {
+        break;
+      }
+      // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+      try {
+        startHook();
+      } catch (e: unknown) {
+        startHookError ??= e;
+      }
+    }
+    if (startHookError) {
+      throw startHookError instanceof Error ? startHookError : new Error(String(startHookError));
+    }
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-start:p1:inst-call-start-hooks
     // @cpt-end:cpt-frontx-telemetry-flow-event-collection-instrument:p1:inst-start-collection
     // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-shipped-start-steps

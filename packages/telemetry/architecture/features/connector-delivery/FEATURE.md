@@ -213,6 +213,7 @@ The shell then sets, from that value, the accepts-reports signal that microfront
 4. [x] - `p1` - Open dispatch, so records and signals reach connectors from here on, including the records the shipped start steps make - `inst-open-dispatch`
 5. [x] - `p1` - Install the page-lifecycle listeners, one for the page becoming hidden and one for pagehide, each running `cpt-frontx-telemetry-algo-connector-delivery-page-flush`. They go in before the shipped start steps, so a start hook that throws still leaves connectors flushed on page close - `inst-install-page-listeners`
 6. [x] - `p1` - Run the remaining shipped start steps unchanged, `inst-register-builtins` to `inst-call-start-hooks` - `inst-shipped-start-steps`
+   1. [x] - `p1` - **IF** a connector handler destroyed the client during one of those steps, **RETURN** the client at once, running no further start step or start hook, so nothing set up during start outlives the teardown; a start hook error raised before that point is still rethrown - `inst-stop-if-destroyed`
 7. [x] - `p1` - **RETURN** the client for chaining - `inst-return-started-client`
 
 ### Record Hand-Off After Enrichment

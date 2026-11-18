@@ -44,9 +44,10 @@ export function createConnectorDispatch(connectors: readonly TelemetryConnector[
       // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-isolated-call:p1:inst-attach-rejection-handler
     // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-isolated-call:p1:inst-try-handler
     // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-isolated-call:p1:inst-catch-handler-throw
-    } catch {
+    } catch (_thrown: unknown) {
       // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-isolated-call:p1:inst-discard-throw
-      // thrown value discarded
+      // The thrown value is discarded: it reaches neither the caller nor the next connector.
+      void _thrown;
       // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-isolated-call:p1:inst-discard-throw
     // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-isolated-call:p1:inst-catch-handler-throw
     } finally {
