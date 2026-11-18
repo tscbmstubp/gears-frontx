@@ -1,9 +1,9 @@
 import type { TelemetryData } from './eventTypes';
-import type { TelemetryConfig, TelemetryConfigNormalized } from './types';
+import type { TelemetryConfigBase, TelemetryConfigNormalized } from './types';
 
 // @cpt-algo:cpt-frontx-telemetry-algo-event-collection-normalize-config:p2
 // @cpt-dod:cpt-frontx-telemetry-dod-event-collection-construction:p1
-export function normalizeOptions(config: TelemetryConfig): TelemetryConfigNormalized {
+export function normalizeOptions(config: TelemetryConfigBase): TelemetryConfigNormalized {
   // @cpt-begin:cpt-frontx-telemetry-algo-event-collection-normalize-config:p2:inst-resolve-endpoint
   const apiVersion = config.apiVersion ?? 1;
   const configUrl =
@@ -27,6 +27,9 @@ export function normalizeOptions(config: TelemetryConfig): TelemetryConfigNormal
     sessionDuration: config.sessionDuration ?? 30 * 60 * 1000, // 30 minutes
     apiVersion,
     // @cpt-end:cpt-frontx-telemetry-algo-event-collection-normalize-config:p2:inst-default-values
+    // Copied, so the list stays as supplied at construction whatever the application does to its array.
+    connectors: [...(config.connectors ?? [])],
+    collector: config.collector,
   };
   // @cpt-end:cpt-frontx-telemetry-algo-event-collection-normalize-config:p2:inst-return-normalized
 }

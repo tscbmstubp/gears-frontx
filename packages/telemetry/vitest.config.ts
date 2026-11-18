@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: __dirname,
+  define: { __GEARS_BUILD_KIND__: JSON.stringify('development') },
   test: {
     globals: true,
     // happy-dom (not jsdom): the autocapture suite drives shadow roots, matchMedia and

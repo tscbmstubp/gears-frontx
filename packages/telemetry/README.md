@@ -83,6 +83,9 @@ it cannot be started again.
 | `verbose`           | `boolean` | `false`    | Log SDK activity to the console.                                                                                                                                  |
 | `storagePrefix`     | `string`  | none       | Infix for the `localStorage` keys the SDK owns: `telemetry_{storagePrefix}_device_id` and `telemetry_{storagePrefix}_session`. Set it to keep two clients apart.   |
 | `sessionDuration`   | `number`  | `1800000`  | Inactivity window in milliseconds before a new session id is minted. 30 minutes.                                                                                  |
+| `connectors`        | `TelemetryConnector[]` | `[]` | Application connectors that receive every record. See *Connectors*. |
+| `collector`         | `boolean` | `true` without connectors, `false` with them | Switches the shipped collector (queue and POST) on or off. |
+| `namespace`         | `string`  | none       | Required when a catalog is given; must equal the catalog's first name segment. See *Declared events*. |
 | `apiVersion`        | `number`  | `1`        | Event envelope version. `2` hoists fields shared by every record in a multi-record batch into `meta`, and drops `context_user_id` and `context_tenant_id`.         |
 
 > **`url` defaults to the same-origin path `/api/events`, and a failed send loses the batch.**
@@ -97,10 +100,18 @@ it cannot be started again.
 | `start()`              | `TelemetryService`| Begin collecting. Registers the built-in plugins, installs listeners, starts the flush scheduler. |
 | `identify(id)`         | `TelemetryService`| Attach a user id to subsequent events. `string \| number`.                          |
 | `logEvent(name, data?)`| `void`            | Record a custom event. Also accepts a full record: `logEvent({ name, data, ... })`. |
+| `record(name, data)`   | `undefined`       | Record a declared event from the catalog. Never throws. See *Declared events*.      |
+| `acceptsReports()`     | `boolean`         | Whether this client takes reports anywhere. Fixed at construction.                  |
+| `getRecords()`         | `TelemetryRecord[]` | The latest enriched records (up to 1000) in a development build; `[]` in production. |
 | `plugin(...plugins)`   | `TelemetryService`| Register plugins. Falsy entries are ignored, so `cond && myPlugin()` is safe.       |
 | `destroy()`            | `void`            | Run the `destroy` hooks, flush the queue, remove listeners, stop collecting.         |
 
-All methods except `logEvent` and `destroy` are chainable.
+All methods except `logEvent`, `record`, `acceptsReports`, `getRecords` and `destroy` are chainable.
+
+`acceptsReports()` is `true` when the client has a connector, when the collector runs with
+`enabled: false` (records are drained but not posted), or in a development build; it is `false`
+otherwise. It never changes during the client's life, so a caller can check it once to decide
+whether to build an expensive report at all.
 
 Register plugins before `start()`. `setup()` runs inside `start()`, so a plugin passed to
 `plugin()` afterwards is stored and never set up.
@@ -108,6 +119,81 @@ Register plugins before `start()`. `setup()` runs inside `start()`, so a plugin 
 A client is single-use. `start()` on a client that is already started, or has been destroyed, is
 refused (and reported when `verbose`), a second `destroy()` does nothing, and an event logged after
 `destroy()` is dropped. Build a new client instead.
+
+## Connectors
+
+A connector is an object the application writes for its own analytics backend. Pass a list as
+`connectors`; the package only calls its handlers, and every handler is optional:
+
+- `onRecord(record)` - each enriched record that passes the consent gate.
+- `onMeasurement(measurement)` - reserved; nothing calls it yet.
+- `onIdentityChange(id)` - when the identity is set, or cleared (`undefined`), as the consent gate
+  passes it on.
+- `onConsentChange(state)` - when the effective consent state changes, as the consent gate passes
+  it on.
+
+The consent gate's rules come with the consent feature; until it lands, nothing calls these two.
+- `onFlush()` - when the page becomes hidden, on `pagehide`, and at `destroy()`.
+- `onShutdown()` - at `destroy()`, after the flush.
+
+`collector` switches the shipped collector (the queue and its POST). It defaults to on without
+connectors and off with them; turn it on to run both side by side (a development build says so in
+the console).
+
+Rules for connector code:
+
+- Handlers run synchronously on the caller's stack, in the order the connectors were given. Keep
+  them cheap.
+- Never record from a handler, including after an `await`. A record made synchronously inside a
+  handler is dropped.
+- Catch your own requests. A handler that throws or rejects is contained and does not stop other
+  connectors, but its work is lost.
+- The page-hide flush may be the last call a connector gets: no shutdown follows when the page
+  closes. Requests sent then with `keepalive` or as a beacon share the browser's 64 KiB allowance
+  with every other such request from the page.
+- Each record is a deep-frozen copy, the same one every connector receives. Do not try to change it.
+
+With no connector and the collector off, a production build stays silent: `start()` registers no
+plugin, installs no listener and writes nothing to storage, and recording calls return at once.
+
+## Declared events
+
+Give the client an event catalog as a type parameter. The catalog maps each event name to its data
+shape. All names share one first segment, the namespace, and the `namespace` option must repeat it:
+
+```ts
+type ShellEvents = {
+  'shell.menu_opened': { menu: string };
+  'shell.search_used': { length: number };
+};
+
+const telemetry = createTelemetry<ShellEvents>({ appName: 'shell', appVersion: '1', namespace: 'shell' });
+telemetry.start();
+telemetry.record('shell.menu_opened', { menu: 'main' });
+```
+
+`record(name, data)` only accepts declared names and their data shapes; anything else fails to
+compile. It returns nothing, never throws (a failing plugin hook is reported, once per hook function
+in a development build), and the catalog leaves nothing in the built code. Names need at least two
+segments, and the namespaces `frontx`, `page_view`, `session_start` and any starting with
+`autocapture_` are reserved. A microfrontend can check its own catalog with the exported
+`CatalogCheck<Catalog, 'namespace'>` type. Without a catalog, `record` cannot be called and no
+`namespace` is needed; `logEvent` keeps working as before.
+
+## Two builds
+
+The main entry is built twice. `dist/` is the production build. `dist/development/` is the
+development build, resolved through the `development` export condition (Vite uses it in dev mode).
+Only the development build carries the inspector: each enriched record is shown as one grouped
+console entry, the latest 1000 are kept for `getRecords()`, and notices explain the setup (for
+example that no connector is configured). In production `getRecords()` returns `[]`.
+
+## Changes in 0.4.0
+
+- `destroy()`: when no teardown hook threw, an error from the final send is now thrown after the
+  connectors are flushed and shut down, instead of at once.
+- The plugin context's `logEvent` now returns `TelemetryRecord | undefined`. It is `undefined` only
+  in a production build with no connector and the collector off, where plugins are never set up.
 
 ## Framework integration
 
@@ -290,7 +376,8 @@ node scripts/run-monorepo-unit-tests.mjs --run --project=telemetry
 npm run demo:telemetry                                      # browser example on port 5273
 ```
 
-47 tests live in `src/__tests__/` - `telemetry.test.ts` (23) and `autocapture.test.ts` (24).
+Tests live in `src/__tests__/`, one file per area (`telemetry`, `autocapture`, `state`, `dispatch`,
+`recordPath`, `lifecycle`, `inspector`, `declaredEvents`, `shellToConnector`).
 `vitest` is pinned to an exact version, guarded repo-wide by
 `scripts/check-test-dependency-versions.mjs`. The vitest `globalSetup` pins `TZ=UTC`, so timezone
 assertions do not depend on the machine.

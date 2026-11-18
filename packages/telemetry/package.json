@@ -1,6 +1,6 @@
 {
   "name": "@gears-frontx/telemetry",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Browser telemetry SDK for FrontX - session tracking, device and navigation context, DOM autocapture, and a plugin system",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -9,6 +9,10 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "development": {
+        "import": "./dist/development/index.js",
+        "require": "./dist/development/index.cjs"
+      },
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     }

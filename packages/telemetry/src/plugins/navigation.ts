@@ -29,7 +29,7 @@ export function navigationPlugin(): TelemetryPlugin {
         context.refreshSession();
         currentUrl = window.location.pathname;
         const record = context.logEvent('page_view', { url: currentUrl });
-        currentPageRecordId = record.id ?? null;
+        currentPageRecordId = record?.id ?? null;
       }
 
       function subscribe() {

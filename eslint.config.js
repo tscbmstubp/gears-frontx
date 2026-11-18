@@ -493,6 +493,18 @@ export default [
     },
   },
 
+  // The declared-events type tests: each `@ts-expect-error` is a negative type test, checked by
+  // `type-check:test` (an unused one fails it). A description is required on each.
+  {
+    files: ['packages/telemetry/src/__tests__/*.types.test.ts'],
+    rules: {
+      '@typescript-eslint/ban-ts-comment': [
+        'error',
+        { 'ts-expect-error': 'allow-with-description', 'ts-ignore': true, 'ts-nocheck': true },
+      ],
+    },
+  },
+
   // ============ @gears-frontx/mfes BOUNDARY ENFORCEMENT (Phase 10) ============
   // MFES-1/2/3 enforced here via no-restricted-syntax denylist.
   // MFES-4 enforced via dep-cruiser rule frontx-mfes-4-type-format-dep (.dependency-cruiser.cjs).
