@@ -212,7 +212,7 @@ The shell then sets, from that value, the accepts-reports signal that microfront
    1. [x] - `p1` - Have the dev inspector show the notice for the state: the no-connector notice in the state without a connector, the collector-beside-connectors notice where one was noted, and no notice in the delivery-suppression mode - `inst-show-state-notice`
 4. [x] - `p1` - Open dispatch, so records and signals reach connectors from here on, including the records the shipped start steps make - `inst-open-dispatch`
 5. [x] - `p1` - Install the page-lifecycle listeners, one for the page becoming hidden and one for pagehide, each running `cpt-frontx-telemetry-algo-connector-delivery-page-flush`. They go in before the shipped start steps, so a start hook that throws still leaves connectors flushed on page close - `inst-install-page-listeners`
-6. [x] - `p1` - Run the remaining shipped start steps unchanged, `inst-register-builtins` to `inst-call-start-hooks` - `inst-shipped-start-steps`
+6. [x] - `p1` - Run the remaining shipped start steps, `inst-register-builtins` to `inst-call-start-hooks`, checking after each one as step 6.1 says - `inst-shipped-start-steps`
    1. [x] - `p1` - **IF** a connector handler destroyed the client during one of those steps, **RETURN** the client at once, running no further start step or start hook, so nothing set up during start outlives the teardown; a start hook error raised before that point is still rethrown - `inst-stop-if-destroyed`
 7. [x] - `p1` - **RETURN** the client for chaining - `inst-return-started-client`
 
@@ -259,16 +259,17 @@ This is the stage of `cpt-frontx-telemetry-component-consent-gate` that sits bef
 
 **Input**: One enriched record handed toward connectors by the record hand-off
 
-**Output**: One frozen copy passed to dispatch; or nothing, where the copy fails
+**Output**: One frozen copy passed to dispatch; or nothing, where no connector has a handler for a record or the copy fails
 
 **Steps**:
-1. [x] - `p1` - **TRY** make one deep copy of the record, nested data included - `inst-deep-copy`
+1. [x] - `p1` - **IF** no connector has a handler for a record, **RETURN** nothing without copying, since no connector would receive it. The connectors are fixed at construction, so this is worked out once - `inst-skip-without-record-handlers`
+2. [x] - `p1` - **TRY** make one deep copy of the record, nested data included - `inst-deep-copy`
    1. [x] - `p1` - Freeze the copy deeply, every nested object included, so no connector can change what another connector or the collector receives; the record the collector queue holds is the original, untouched - `inst-deep-freeze`
-2. [x] - `p1` - **CATCH** a copy failure, for example data holding a function - `inst-catch-copy-failure`
+3. [x] - `p1` - **CATCH** a copy failure, for example data holding a function - `inst-catch-copy-failure`
    1. [x] - `p1` - Report it through the shipped logger; the record does not reach connectors, and nothing reaches the caller - `inst-report-copy-failure`
    2. [x] - `p1` - **RETURN** nothing - `inst-return-copy-failed`
-3. [x] - `p1` - Pass the frozen copy to dispatch at once, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record` - `inst-pass-at-once`
-4. [x] - `p1` - **RETURN** nothing; the stage keeps no reference to the record or the copy - `inst-return-passed`
+4. [x] - `p1` - Pass the frozen copy to dispatch at once, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record` - `inst-pass-at-once`
+5. [x] - `p1` - **RETURN** nothing; the stage keeps no reference to the record or the copy - `inst-return-passed`
 
 ### Record Dispatch
 
@@ -489,7 +490,7 @@ After enrichment, the events manager **MUST** hand every record toward connector
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-connector-delivery-gate-pass-through`
 
-The consent gate's stage before dispatch **MUST** make one deep copy of each record handed toward connectors, freeze it deeply with nested data included, and pass that same copy to dispatch at once. The record the collector queue holds **MUST** stay the original. If the copy fails, the record **MUST NOT** reach connectors, the failure **MUST** go through the shipped logger, and nothing **MUST** reach the caller. This stage **MUST** be released only together with the consent feature, which replaces "pass at once" with its consent rules, so connectors never receive records without a consent check.
+The consent gate's stage before dispatch **MUST** make one deep copy of each record handed toward connectors, freeze it deeply with nested data included, and pass that same copy to dispatch at once. Where no connector has a handler for a record, the stage **MUST** return without copying. The record the collector queue holds **MUST** stay the original. If the copy fails, the record **MUST NOT** reach connectors, the failure **MUST** go through the shipped logger, and nothing **MUST** reach the caller. This stage **MUST** be released only together with the consent feature, which replaces "pass at once" with its consent rules, so connectors never receive records without a consent check.
 
 **Verification**: A unit test records an event whose data holds a function and asserts that no connector receives it, the logger reports the failure, and the caller sees no error.
 

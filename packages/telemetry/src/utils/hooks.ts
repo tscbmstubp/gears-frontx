@@ -97,6 +97,16 @@ export function createHooks(): HooksManager {
   }
 }
 
+// A thrown value as notice text. `String()` itself throws for a value with no string form, such as
+// `Object.create(null)`, and contained enrichment must never throw.
+function describeThrown(error: unknown): string {
+  try {
+    return String(error);
+  } catch {
+    return '[unprintable error]';
+  }
+}
+
 // Enrichment for the recording surfaces this design adds: a failing `event` hook keeps the record
 // and the caller never sees the error. `failed` holds the hook functions that already failed on
 // this client, so each one raises at most one development notice.
@@ -129,7 +139,7 @@ export function callEventHooksContained(
       // @cpt-begin:cpt-frontx-telemetry-state-declared-events-hook-failure:p1:inst-clean-to-reported
       failed.add(hook);
       if (buildKind === 'development') {
-        notice(`An "event" enrichment hook threw; the record was kept: ${String(error)}`);
+        notice(`An "event" enrichment hook threw; the record was kept: ${describeThrown(error)}`);
       }
       // @cpt-end:cpt-frontx-telemetry-state-declared-events-hook-failure:p1:inst-clean-to-reported
       // @cpt-end:cpt-frontx-telemetry-algo-declared-events-contained-enrichment:p1:inst-notice-first-failure

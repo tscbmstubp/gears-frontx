@@ -84,7 +84,7 @@ export function deriveTelemetryState(input: DeriveStateInput): DerivedTelemetryS
   // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-derive-state:p1:inst-check-both-active
   if (collector && hasConnector) {
     // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-derive-state:p1:inst-note-both-active
-    // The flag is the note; a development build shows the notice at start (a later phase).
+    // The flag is the note; start() shows the notice in a development build.
     collectorBesideConnectors = true;
     // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-derive-state:p1:inst-note-both-active
   }

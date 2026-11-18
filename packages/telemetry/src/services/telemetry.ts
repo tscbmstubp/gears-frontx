@@ -7,7 +7,7 @@ import { autocapturePlugin } from '../plugins/autocapture/autocapture';
 import { devicePlugin } from '../plugins/device';
 import { navigationPlugin } from '../plugins/navigation';
 import { sessionPlugin } from '../plugins/session';
-import type { CatalogData, CatalogName, TelemetryNoCatalog } from '../catalog/types';
+import type { CatalogName, TelemetryNoCatalog } from '../catalog/types';
 import type {
   TelemetryData,
   TelemetryLogEventParams,
@@ -18,7 +18,7 @@ import { createLogger } from '../utils/logger';
 import type { TelemetryContext, TelemetryConfig, TelemetryPluginOption } from '../utils/types';
 import { normalizeOptions } from '../utils/utils';
 import { BUILD_KIND, type BuildKind } from '../build/kind';
-import { passThroughRecord } from '../connectors/consentGate';
+import { createGateStage } from '../connectors/consentGate';
 import { createConnectorDispatch } from '../connectors/dispatch';
 import { createInspector } from '../inspector/inspector';
 import { deriveTelemetryState } from './state';
@@ -83,7 +83,7 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
     getTelemetryState: () => telemetryState,
     dispatch,
     // @cpt-begin:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-deliver-record
-    gateStage: (record) => passThroughRecord(record, dispatch.dispatchRecord, logger),
+    gateStage: createGateStage(config.connectors, dispatch.dispatchRecord, logger),
     // @cpt-end:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-deliver-record
     inspector,
   };
@@ -143,7 +143,7 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
   // new-surface hand-off that never reaches the caller with a value, a promise or an error.
   // @cpt-algo:cpt-frontx-telemetry-algo-declared-events-typed-record:p1
   // @cpt-begin:cpt-frontx-telemetry-flow-declared-events-shell-events:p1:inst-record-declared-event
-  function record<N extends CatalogName<C>>(name: N, data: CatalogData<C, N>): undefined {
+  function record(name: CatalogName<C>, data: unknown): undefined {
     // @cpt-begin:cpt-frontx-telemetry-flow-declared-events-shell-events:p1:inst-run-typed-record
     // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-record:p1:inst-try-typed-record
     try {

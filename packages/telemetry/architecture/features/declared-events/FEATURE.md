@@ -182,9 +182,11 @@ The namespace option's type comes from the catalog because TypeScript cannot inf
    1. [x] - `p1` - **RETURN** a type error for any name: the typed record call accepts none, and the shipped `logEvent` stays available for untyped recording - `inst-refuse-without-catalog`
 2. [x] - `p1` - **IF** the name is not one the catalog declares - `inst-check-declared-name`
    1. [x] - `p1` - **RETURN** a type error - `inst-refuse-undeclared-name`
-3. [x] - `p1` - **IF** the data does not match the shape the catalog declares for that name - `inst-check-data-shape`
+3. [x] - `p1` - **IF** the name is not one single declared name, for example a value that may be either of two names - `inst-check-single-name`
+   1. [x] - `p1` - **RETURN** a type error, since such a name would accept the data of any of those names - `inst-refuse-union-name`
+4. [x] - `p1` - **IF** the data does not match the shape the catalog declares for that name - `inst-check-data-shape`
    1. [x] - `p1` - **RETURN** a type error - `inst-refuse-wrong-shape`
-4. [x] - `p1` - **RETURN** the call accepted; the check leaves nothing in the built code - `inst-accept-call`
+5. [x] - `p1` - **RETURN** the call accepted; the check leaves nothing in the built code - `inst-accept-call`
 
 ### Typed Record At Runtime
 

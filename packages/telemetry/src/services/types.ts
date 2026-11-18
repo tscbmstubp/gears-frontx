@@ -1,4 +1,10 @@
-import type { CatalogData, CatalogName, TelemetryNoCatalog } from '../catalog/types';
+import type {
+  CatalogData,
+  CatalogName,
+  IsUnion,
+  TelemetryCatalogError,
+  TelemetryNoCatalog,
+} from '../catalog/types';
 import type { TelemetryLogEventParams, TelemetryRecord, TelemetryUserId } from '../utils/eventTypes';
 import type { TelemetryPluginOption } from '../utils/types';
 
@@ -44,9 +50,16 @@ export type TelemetryRecordEvent<C extends object> =
         // @cpt-end:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-check-declared-name
       >(
         name: N,
-        // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-check-data-shape
-        // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-refuse-wrong-shape
-        data: CatalogData<C, N>,
+        // A name typed as a choice of names would accept any one of their data shapes.
+        // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-check-single-name
+        data: IsUnion<N> extends true
+          ? // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-refuse-union-name
+            TelemetryCatalogError<'record() needs one literal event name'>
+          : // @cpt-end:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-refuse-union-name
+            // @cpt-end:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-check-single-name
+            // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-check-data-shape
+            // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-refuse-wrong-shape
+            CatalogData<C, N>,
         // @cpt-end:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-refuse-wrong-shape
         // @cpt-end:cpt-frontx-telemetry-algo-declared-events-typed-call-check:p1:inst-check-data-shape
       ) => undefined;

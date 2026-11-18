@@ -115,3 +115,45 @@ describe.each<BuildKind>(['production', 'development'])('typed record (%s build)
     expect(records).toEqual([]);
   });
 });
+
+describe('contained enrichment notice (development build)', () => {
+  it('a hook throwing a value with no string form keeps the record and shows one notice', () => {
+    quietConsole();
+    const info = vi.mocked(console.info);
+    const records: TelemetryRecord[] = [];
+    const telemetry = createTelemetryWithBuildKind<ShellCatalog>(
+      {
+        appName: 'app',
+        appVersion: '1',
+        autocapture: false,
+        navigationCapture: false,
+        url: 'https://collector.test/events',
+        namespace: 'shell',
+        connectors: [capturing(records)],
+        collector: true,
+      },
+      'development',
+    );
+    telemetry.plugin({
+      name: 'unprintable-hook',
+      setup: (ctx) =>
+        ctx.addHook('event', (record) => {
+          if (record.name === 'shell.menu_opened') throw Object.create(null);
+        }),
+    });
+    telemetry.start();
+
+    expect(() => telemetry.record('shell.menu_opened', { menu: 'one' })).not.toThrow();
+    expect(() => telemetry.record('shell.menu_opened', { menu: 'two' })).not.toThrow();
+
+    expect(records.filter((r) => r.name === 'shell.menu_opened')).toHaveLength(2);
+    const notices = info.mock.calls.filter(([message]) =>
+      String(message).includes('An "event" enrichment hook threw'),
+    );
+    expect(notices).toHaveLength(1);
+
+    telemetry.destroy();
+    expect(postedBodies().filter((body) => body.includes('shell.menu_opened'))).toHaveLength(1);
+    expect(postedBodies().join('')).toContain('two');
+  });
+});

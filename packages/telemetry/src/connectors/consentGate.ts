@@ -3,7 +3,9 @@
 // Consent gate, pass-through stage. The consent feature replaces step `inst-pass-at-once`
 // (the immediate hand-off to record dispatch) with its consent rules. The two are released
 // together, so connectors never receive records without a consent check.
+import type { TelemetryRecord } from '../utils/eventTypes';
 import type { TelemetryLoggerService } from '../utils/logger';
+import type { TelemetryConnector } from './types';
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -15,12 +17,29 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+// The client's gate stage. Connectors are fixed at construction, so whether any of them has a
+// record handler is worked out once here rather than for every record.
+export function createGateStage(
+  connectors: readonly TelemetryConnector[],
+  dispatchRecord: (frozen: Readonly<TelemetryRecord>) => void,
+  logger: Pick<TelemetryLoggerService, 'logError'>,
+): (record: TelemetryRecord) => void {
+  const hasRecordHandler = connectors.some((connector) => !!connector.onRecord);
+  return (record) => passThroughRecord(record, dispatchRecord, logger, hasRecordHandler);
+}
+
 // @cpt-algo:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1
 export function passThroughRecord<T extends object>(
   data: T,
   dispatchRecord: (frozen: Readonly<T>) => void,
   logger: Pick<TelemetryLoggerService, 'logError'>,
+  hasRecordHandler = true,
 ): void {
+  // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-skip-without-record-handlers
+  if (!hasRecordHandler) {
+    return;
+  }
+  // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-skip-without-record-handlers
   let frozen: Readonly<T>;
   // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-deep-copy
   try {

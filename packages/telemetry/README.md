@@ -64,8 +64,9 @@ immediate flush when the page goes to `visibilitychange` / hidden. The POST uses
 Log events after `start()`. The built-in plugins are only registered there, so anything logged
 earlier goes out without session, device or app context.
 
-Call `destroy()` on teardown. It runs the `destroy` hooks, sends whatever is still queued, and
-removes the listeners. The client is finished after that: an event logged to it is dropped, and
+Call `destroy()` on teardown. It runs the `destroy` hooks, sends whatever is still queued, asks
+every connector to flush and then to shut down, and removes the listeners, the page listeners
+included. The client is finished after that: an event logged to it is dropped, and
 it cannot be started again.
 
 ## Configuration
@@ -104,7 +105,7 @@ it cannot be started again.
 | `acceptsReports()`     | `boolean`         | Whether this client takes reports anywhere. Fixed at construction.                  |
 | `getRecords()`         | `TelemetryRecord[]` | The latest enriched records (up to 1000) in a development build; `[]` in production. |
 | `plugin(...plugins)`   | `TelemetryService`| Register plugins. Falsy entries are ignored, so `cond && myPlugin()` is safe.       |
-| `destroy()`            | `void`            | Run the `destroy` hooks, flush the queue, remove listeners, stop collecting.         |
+| `destroy()`            | `void`            | Run the `destroy` hooks, send the queue, then call every connector's `onFlush` and `onShutdown`, remove listeners (page listeners included), stop collecting. |
 
 All methods except `logEvent`, `record`, `acceptsReports`, `getRecords` and `destroy` are chainable.
 
@@ -132,10 +133,11 @@ A connector is an object the application writes for its own analytics backend. P
   passes it on.
 - `onConsentChange(state)` - when the effective consent state changes, as the consent gate passes
   it on.
-
-The consent gate's rules come with the consent feature; until it lands, nothing calls these two.
 - `onFlush()` - when the page becomes hidden, on `pagehide`, and at `destroy()`.
 - `onShutdown()` - at `destroy()`, after the flush.
+
+The consent gate's rules come with the consent feature; until it lands, nothing calls
+`onIdentityChange` or `onConsentChange`.
 
 `collector` switches the shipped collector (the queue and its POST). It defaults to on without
 connectors and off with them; turn it on to run both side by side (a development build says so in
@@ -378,7 +380,8 @@ npm run demo:telemetry                                      # browser example on
 ```
 
 Tests live in `src/__tests__/`, one file per area (`telemetry`, `autocapture`, `state`, `dispatch`,
-`recordPath`, `lifecycle`, `inspector`, `declaredEvents`, `shellToConnector`).
+`recordPath`, `lifecycle`, `inspector`, `declaredEvents`, `declaredEvents.types`,
+`shellToConnector`).
 `vitest` is pinned to an exact version, guarded repo-wide by
 `scripts/check-test-dependency-versions.mjs`. The vitest `globalSetup` pins `TZ=UTC`, so timezone
 assertions do not depend on the machine.

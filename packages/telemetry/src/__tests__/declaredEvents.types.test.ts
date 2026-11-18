@@ -36,6 +36,9 @@ function negatives() {
   shell.record('shell.unknown', { menu: 'x' });
   // @ts-expect-error wrong data shape
   shell.record('shell.menu_opened', { menu: 1 });
+  const either = Math.random() > 0.5 ? ('shell.menu_opened' as const) : ('shell.tenant_switched' as const);
+  // @ts-expect-error a name that may be one of two names takes neither name's data
+  shell.record(either, { tenantId: 't1', depth: 2 });
 
   const plain = createTelemetry(base);
   // @ts-expect-error a client without a catalog accepts no name

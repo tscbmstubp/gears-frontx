@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BuildKind } from '../build/kind';
-import { passThroughRecord } from '../connectors/consentGate';
+import { createGateStage } from '../connectors/consentGate';
 import { createConnectorDispatch } from '../connectors/dispatch';
 import type { TelemetryConnector } from '../connectors/types';
 import type { Inspector } from '../inspector/inspector';
@@ -53,7 +53,7 @@ function setup({ buildKind, connectors = [], collector, inspector = {} }: SetupO
     buildKind,
     getTelemetryState: () => telemetryState,
     dispatch,
-    gateStage: (record) => passThroughRecord(record, dispatch.dispatchRecord, logger),
+    gateStage: createGateStage(connectors, dispatch.dispatchRecord, logger),
     inspector: insp,
   };
   const manager = createEventsManager(context);

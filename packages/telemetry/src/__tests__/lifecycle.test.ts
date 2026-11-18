@@ -363,6 +363,77 @@ describe.each<BuildKind>(['production', 'development'])('lifecycle (%s)', (build
     expect(freshStorage.setItem).not.toHaveBeenCalled();
   });
 
+  it('a start hook error raised before a connector destroys the client during start is still thrown', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+      clear: () => store.clear(),
+      key: (index: number) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+    });
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+    onTestFinished(() => {
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const order: string[] = [];
+    const hookError = new Error('caller start hook failed');
+    const ref: { client?: ReturnType<typeof createTelemetryWithBuildKind> } = {};
+    const telemetry = createTelemetryWithBuildKind(
+      {
+        ...baseConfig,
+        navigationCapture: true,
+        verbose: true,
+        connectors: [
+          fakeConnector('a', [], {
+            onRecord: (record) => {
+              order.push(record.name);
+              if (record.name === 'session_start') ref.client?.destroy();
+            },
+          }),
+        ],
+      },
+      buildKind,
+    );
+    ref.client = telemetry;
+    // Caller plugins are set up before the built-ins, so this start hook runs before the session
+    // plugin's, which records session_start.
+    telemetry.plugin({
+      name: 'caller-start',
+      setup: (ctx) =>
+        ctx.addHook('start', () => {
+          order.push('caller start hook');
+          throw hookError;
+        }),
+    });
+
+    let thrown: unknown;
+    try {
+      telemetry.start();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(hookError);
+    expect(order).toEqual(['caller start hook', 'session_start']);
+    expect(window.history.pushState).toBe(originalPushState);
+    expect(window.history.replaceState).toBe(originalReplaceState);
+
+    // Destroyed: a later record reaches no connector and a restart is refused as destroyed.
+    telemetry.logEvent('after-destroy');
+    telemetry.start();
+    expect(order).toEqual(['caller start hook', 'session_start']);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Telemetry has been destroyed; build a new client instead of restarting.',
+    );
+  });
+
   it('destroy on a never-started client calls no connector', () => {
     const calls: Call[] = [];
     const telemetry = connected(calls);
@@ -400,5 +471,56 @@ describe.each<BuildKind>(['production', 'development'])('lifecycle (%s)', (build
     } else {
       expect(telemetry.getRecords()).toEqual([]);
     }
+  });
+});
+
+describe.each<BuildKind>(['production', 'development'])('gate copy (%s)', (buildKind) => {
+  beforeEach(() => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'groupCollapsed').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+  });
+
+  // Data holding a function cannot be copied, so a copy attempt would log a copy failure.
+  const uncopyable = { fn: () => 1 } as never;
+
+  it.each<[string, TelemetryConnector[]]>([
+    ['no connector', []],
+    ['a connector with only onFlush', [{ onFlush: () => {} }]],
+  ])('with %s, a record is not copied and no copy failure is logged', (_label, connectors) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const telemetry = createTelemetryWithBuildKind(
+      { ...baseConfig, verbose: true, collector: true, url: 'https://collector.test/e', connectors },
+      buildKind,
+    );
+    onTestFinished(() => telemetry.destroy());
+    telemetry.start();
+    const clone = vi.spyOn(globalThis, 'structuredClone');
+
+    telemetry.logEvent('uncopyable', uncopyable);
+    telemetry.logEvent('plain', { a: 1 });
+
+    expect(clone).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining('copy failed'),
+      expect.anything(),
+    );
+  });
+
+  it('with an onRecord connector, a record is still copied', () => {
+    const received: unknown[] = [];
+    const telemetry = createTelemetryWithBuildKind(
+      { ...baseConfig, connectors: [{ onRecord: (record) => void received.push(record) }] },
+      buildKind,
+    );
+    onTestFinished(() => telemetry.destroy());
+    telemetry.start();
+    const clone = vi.spyOn(globalThis, 'structuredClone');
+
+    telemetry.logEvent('copied', { a: 1 });
+
+    expect(clone).toHaveBeenCalledTimes(1);
+    expect(received.map((r) => (r as { name: string }).name)).toContain('copied');
   });
 });

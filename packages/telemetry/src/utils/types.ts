@@ -76,7 +76,10 @@ export type TelemetryConfigBase = {
    */
   navigationCapture?: boolean;
   /**
-   * Enables or disables telemetry events
+   * Switches the collector's POST. When `false`, the collector still enriches records and drains
+   * its queue but sends nothing. With application connectors it silences only the collector;
+   * connectors are unaffected.
+   * @default true
    */
   enabled?: boolean;
   /**

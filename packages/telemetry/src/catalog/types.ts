@@ -35,7 +35,8 @@ type FirstSegment<N extends string> = N extends `${infer Head}.${string}` ? Head
  */
 export type CatalogNamespace<C> = FirstSegment<CatalogName<C>>;
 
-type IsUnion<T, All = T> = T extends unknown ? ([All] extends [T] ? false : true) : never;
+/** `true` when `T` is a union of two or more types; `false` for a single type. */
+export type IsUnion<T, All = T> = T extends unknown ? ([All] extends [T] ? false : true) : never;
 
 // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-read-segments
 type HasTwoSegments<N extends string> = N extends `${string}.${infer Rest}`
