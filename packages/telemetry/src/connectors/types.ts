@@ -1,4 +1,8 @@
+// @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-typed-consent-change:p1
 import type { TelemetryRecord, TelemetryUserId } from '../utils/eventTypes';
+
+/** The consent answer: `unknown` until the application sets it. */
+export type TelemetryConsentState = 'unknown' | 'granted' | 'denied';
 
 /**
  * An object the application writes for its own analytics backend. The package only calls its
@@ -16,10 +20,12 @@ export type TelemetryConnector = {
   onRecord?: (record: Readonly<TelemetryRecord>) => void | Promise<void>;
   /** Reserved: nothing calls it until performance measurement is designed. */
   onMeasurement?: (measurement: unknown) => void | Promise<void>;
+  // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-connector-reads:p1:inst-cr-write-handlers
   /** Called with the identity that was set, or `undefined` when it was cleared. */
   onIdentityChange?: (id: TelemetryUserId | undefined) => void | Promise<void>;
   /** Called with the effective consent state when it changes. */
-  onConsentChange?: (state: unknown) => void | Promise<void>;
+  onConsentChange?: (state: TelemetryConsentState) => void | Promise<void>;
+  // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-connector-reads:p1:inst-cr-write-handlers
   /**
    * Called when the page becomes hidden, on pagehide, and at destroy, synchronously inside the
    * event's handler. The flush may be the connector's last call: no shutdown follows when the page

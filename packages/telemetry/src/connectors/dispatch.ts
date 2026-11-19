@@ -1,5 +1,5 @@
 import type { TelemetryRecord, TelemetryUserId } from '../utils/eventTypes';
-import type { TelemetryConnector } from './types';
+import type { TelemetryConnector, TelemetryConsentState } from './types';
 
 // @cpt-dod:cpt-frontx-telemetry-dod-connector-delivery-isolated-dispatch:p1
 // @cpt-dod:cpt-frontx-telemetry-dod-connector-delivery-signals:p1
@@ -17,7 +17,7 @@ export type ConnectorDispatch = {
   close: () => void;
   dispatchRecord: (frozen: Readonly<TelemetryRecord>) => void;
   dispatchIdentityChange: (id: TelemetryUserId | undefined) => void;
-  dispatchConsentChange: (state: unknown) => void;
+  dispatchConsentChange: (state: TelemetryConsentState) => void;
   dispatchFlush: () => void;
   dispatchShutdown: () => void;
   /** Internal flush-request entry; not on the public client. */

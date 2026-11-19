@@ -1,3 +1,5 @@
+// @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-collector-unchanged:p1
+// @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-input-validation:p1
 import { createEventsManager } from '../managers/events';
 import { createPluginsManager } from '../managers/plugins';
 import { createSessionManager } from '../managers/session';
@@ -18,7 +20,8 @@ import { createLogger } from '../utils/logger';
 import type { TelemetryContext, TelemetryConfig, TelemetryPluginOption } from '../utils/types';
 import { normalizeOptions } from '../utils/utils';
 import { BUILD_KIND, type BuildKind } from '../build/kind';
-import { createGateStage } from '../connectors/consentGate';
+import { createConsentGate, createGateStage, type IdentityDeps } from '../connectors/consentGate';
+import type { TelemetryConsentState } from '../connectors/types';
 import { createConnectorDispatch } from '../connectors/dispatch';
 import { createInspector } from '../inspector/inspector';
 import { deriveTelemetryState } from './state';
@@ -75,6 +78,13 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
   const dispatch = createConnectorDispatch(config.connectors);
   // @cpt-end:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-fix-state
   const inspector = createInspector(buildKind);
+  // The consent options are read from the supplied config; the gate applies the defaults
+  // (`unsetCountsAsGranted` false, `holdWhileUnknown` true).
+  // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-create-client
+  // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-init-gate
+  const gate = createConsentGate({ consent: configRaw.consent, inspector });
+  // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-init-gate
+  // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-create-client
   const context: TelemetryContext = {
     config,
     hooks,
@@ -83,7 +93,10 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
     getTelemetryState: () => telemetryState,
     dispatch,
     // @cpt-begin:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-deliver-record
-    gateStage: createGateStage(config.connectors, dispatch.dispatchRecord, logger),
+    // The gate reads the client's lifecycle, destroyed from the moment `destroy()` begins.
+    // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-record-events
+    gateStage: createGateStage(config.connectors, dispatch.dispatchRecord, logger, gate, isDestroyed),
+    // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-record-events
     // @cpt-end:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-deliver-record
     inspector,
   };
@@ -100,6 +113,8 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
     logEvent,
     record,
     identify,
+    setConsent,
+    resetIdentity,
     acceptsReports,
     getRecords,
   };
@@ -110,10 +125,27 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
   // the shipped start steps, which already make records. Read through a function so the check is
   // not narrowed away by the `lifecycle = 'started'` assignment in `start()`.
   const destroyedDuringStart = () => lifecycle === 'destroyed';
+  // What the gate's consent and identity operations need from the client. `userInfo` is the
+  // shipped user-info manager, whose stamping runs at once and is never queued.
+  const gateDeps: IdentityDeps = {
+    dispatchRecord: dispatch.dispatchRecord,
+    dispatchConsentChange: dispatch.dispatchConsentChange,
+    dispatchIdentityChange: dispatch.dispatchIdentityChange,
+    isDispatchOpen: () => dispatch.getState() === 'OPEN',
+    logger,
+    isDestroyed,
+    userInfo: userInfoManager,
+  };
 
   // @cpt-begin:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-return-connected
   return rootApi;
   // @cpt-end:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-return-connected
+
+  // The gate reads the client's lifecycle, destroyed from the moment `destroy()` begins: the
+  // lifecycle is set to DESTROYED right after destroy's shipped guards, before any teardown step.
+  function isDestroyed() {
+    return lifecycle === 'destroyed';
+  }
 
   // The development inspector's record list for this client; `[]` in the production build.
   function getRecords() {
@@ -170,11 +202,57 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
   // @cpt-end:cpt-frontx-telemetry-flow-declared-events-shell-events:p1:inst-record-declared-event
 
   // @cpt-begin:cpt-frontx-telemetry-flow-event-collection-instrument:p1:inst-identify-user
+  // @cpt-flow:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1
   function identify(newUserId: TelemetryUserId) {
-    userInfoManager.identify(newUserId);
+    // The gate stamps the identifier through the user-info manager at once, as shipped, then
+    // runs its identity rule through the queue. A gate failure is logged, never thrown.
+    try {
+      // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-identify-stamp
+      // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-identify-gate
+      gate.identify(newUserId, gateDeps);
+      // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-identify-gate
+      // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-identify-stamp
+    } catch (error) {
+      logger.logError('Telemetry: identify failed inside the consent gate.', error);
+    }
+    // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-return
     return rootApi;
+    // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-return
   }
   // @cpt-end:cpt-frontx-telemetry-flow-event-collection-instrument:p1:inst-identify-user
+
+  // Clears the identity: the stamp at once, the gate's reset rule through the queue. Returns
+  // nothing and never throws.
+  function resetIdentity(): void {
+    try {
+      // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-reset
+      gate.resetIdentity(gateDeps);
+      // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-reset
+    } catch (error) {
+      logger.logError('Telemetry: resetIdentity failed inside the consent gate.', error);
+    }
+    // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-return
+    return;
+    // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-identify-reset:p1:inst-idr-return
+  }
+
+  // Sets the application's consent answer. Returns nothing and never throws; a value that is not
+  // a consent state is logged and ignored by the gate.
+  // @cpt-flow:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1
+  function setConsent(state: TelemetryConsentState): void {
+    try {
+      // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-ask-user
+      // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-call-set-consent
+      gate.setConsent(state, gateDeps);
+      // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-call-set-consent
+      // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-ask-user
+    } catch (error) {
+      logger.logError('Telemetry: setConsent failed inside the consent gate.', error);
+    }
+    // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-return
+    return;
+    // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-return
+  }
 
   // @cpt-begin:cpt-frontx-telemetry-flow-event-collection-instrument:p1:inst-start-client
   function start() {
@@ -279,8 +357,18 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
     dispatch.open();
     // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-open-dispatch
 
-    // Consent attach point (consent feature): the start-time pass of the effective consent state
-    // goes here, between opening dispatch and installing the page-lifecycle listeners.
+    // The consent start pass: every connector learns the effective state once, then any identity
+    // kept before start is handled by it. A connector may destroy the client during the pass.
+    // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-start-client
+    gate.startPass(gateDeps);
+    // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-start-client
+    // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-check-destroyed-after-state
+    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    if (destroyedDuringStart()) {
+      return rootApi;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-stop-if-destroyed
+    // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-check-destroyed-after-state
 
     // Installed before the shipped start steps, so a start hook that throws still leaves them.
     // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-start:p1:inst-install-page-listeners
@@ -487,8 +575,8 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
     // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-destroy:p1:inst-close-dispatch
     dispatch.close();
     // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-destroy:p1:inst-close-dispatch
-    // Consent attach point (consent feature): the gate's held records and held identity are
-    // dropped here, between closing dispatch and removing the page-lifecycle listeners.
+    // The consent destroy drop: nothing held, kept or queued survives, and the gate closes.
+    gate.destroyDrop();
     // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-destroy:p1:inst-remove-page-listeners
     document.removeEventListener('visibilitychange', handlePageVisibility);
     window.removeEventListener('pagehide', handlePageHide);

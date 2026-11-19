@@ -9,6 +9,8 @@ const baseConfig: TelemetryConfig = {
   appVersion: '1',
   autocapture: false,
   navigationCapture: false,
+  // Consent counts as granted, so these lifecycle tests see records reach connectors at once.
+  consent: { unsetCountsAsGranted: true },
 };
 
 type Call = { connector: string; handler: string; value?: unknown };

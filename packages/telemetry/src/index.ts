@@ -33,5 +33,6 @@ export type {
 
 export type { Inspector, InspectorRecord } from './inspector/inspector';
 export type { BuildKind } from './build/kind';
-export type { TelemetryConnector } from './connectors/types';
+export type { TelemetryConnector, TelemetryConsentState } from './connectors/types';
+export type { TelemetryConsentOptions } from './utils/types';
 export type { TelemetryState } from './services/state';

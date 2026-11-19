@@ -54,7 +54,7 @@ The feature-entry identifier the kit's template places here is deliberately abse
 
 ### 1.1 Overview
 
-Covers how an enriched record reaches the connectors an application supplies. A connector is an object the application writes for its own analytics backend; the package only calls its handlers. This feature fixes the client's telemetry state when the client is built, decides whether the shipped collector is on, and derives the accepts-reports value that tells microfrontends whether the shell records what they send. It builds the consent gate's stage before dispatch as a pass-through: it makes one frozen copy of each record and passes it on at once. It specifies connector dispatch: the one place that calls connectors, keeps each call isolated so a failure stays inside the package, and asks connectors to flush when the page is hidden or closed. It also adds the connector steps to client start and destroy, and the development-only inspector that shows every record in the console.
+Covers how an enriched record reaches the connectors an application supplies. A connector is an object the application writes for its own analytics backend; the package only calls its handlers. This feature fixes the client's telemetry state when the client is built, decides whether the shipped collector is on, and derives the accepts-reports value that tells microfrontends whether the shell records what they send. It builds the consent gate's stage before dispatch: it hands each record to the consent rules, which make one frozen copy of a record they pass or hold. It specifies connector dispatch: the one place that calls connectors, keeps each call isolated so a failure stays inside the package, and asks connectors to flush when the page is hidden or closed. It also adds the connector steps to client start and destroy, and the development-only inspector that shows every record in the console.
 
 A few terms used throughout:
 - A frozen copy is one JSON-like deep copy of a record, nested data included, locked against change. JSON-like means strings, finite numbers, booleans, null, arrays and plain objects only: a date becomes its ISO string, a map a plain object with string keys, a set and byte data arrays of numbers, and a number that is not finite becomes null.
@@ -63,7 +63,7 @@ A few terms used throughout:
 - Handler names, and the shapes of what each handler receives, are left to the code under the connector contract, `cpt-frontx-telemetry-interface-connector`. This feature names handlers by what they receive: a record, an identity change, a consent change, a flush request or a shutdown request.
 
 Out of scope, and touched only where a step meets them:
-- The consent gate's rules: the one consent state, the hold, identity, the start-time consent pass, and dropping what the gate holds at destroy. They belong to the consent feature, which is stacked on this one, replaces the pass-through step with its rules, and attaches at one named point in start and one in destroy. The two are released together, so connectors never receive records without a consent check.
+- The consent gate's rules: the one consent state, the hold, identity, the start-time consent pass, and dropping what the gate holds at destroy. They belong to the consent feature, which is stacked on this one and built: its rules take the pass-through step's place (`cpt-frontx-telemetry-algo-consent-gate-apply-rules`), and it attaches at one named point in start and one in destroy. The two are released together, so connectors never receive records without a consent check.
 - The microfrontend reporter and receiver. Dispatch offers a flush-request entry that any component can call; the receiver will be one caller.
 - Flows, dialogs and key actions.
 - Error capture, including its window listeners, which destroy removes at the step this feature names.
@@ -255,15 +255,15 @@ The shell then sets, from that value, the accepts-reports signal that microfront
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through`
 
-This is the stage of `cpt-frontx-telemetry-component-consent-gate` that sits before dispatch, built here without consent rules. The consent feature, stacked on this one, replaces step `inst-pass-at-once` with its consent rules. The two are released together, so connectors never receive records without a consent check.
+This is the stage of `cpt-frontx-telemetry-component-consent-gate` that sits before dispatch. Step `inst-pass-at-once` hands the record to the consent rules, `cpt-frontx-telemetry-algo-consent-gate-apply-rules`. The copy step `inst-deep-copy` and its failure path are run by those rules, only for a record that is passed or held, so a dropped record is never copied. The two features are released together, so connectors never receive records without a consent check.
 
 **Input**: One enriched record handed toward connectors by the record hand-off
 
-**Output**: One frozen copy passed to dispatch; or nothing, where no connector has a handler for a record or the copy fails
+**Output**: The record handed to the consent rules, which pass or hold one frozen copy or drop it; or nothing, where no connector has a handler for a record
 
 **Steps**:
 1. [x] - `p1` - **IF** no connector has a handler for a record, **RETURN** nothing without copying, since no connector would receive it. The connectors are fixed at construction, so this is worked out once - `inst-skip-without-record-handlers`
-2. [x] - `p1` - **TRY** make one JSON-like deep copy of the record, nested data included - `inst-deep-copy`
+2. [x] - `p1` - **TRY** make one JSON-like deep copy of the record, nested data included. The consent rules run this step and its failure path, only for a record that is passed or held - `inst-deep-copy`
    1. [x] - `p1` - A date becomes its ISO string, and an invalid date becomes null - `inst-copy-dates`
    2. [x] - `p1` - A map becomes a plain object: each key becomes a string, the later of two keys that give the same string wins, and the values are converted - `inst-copy-maps`
    3. [x] - `p1` - A set becomes an array of its converted values; byte data becomes an array of numbers, whether a typed array, an array buffer or a data view - `inst-copy-sets-bytes`
@@ -272,7 +272,7 @@ This is the stage of `cpt-frontx-telemetry-component-consent-gate` that sits bef
 3. [x] - `p1` - **CATCH** a copy failure: data holding a function, a symbol or a bigint, a typed array of bigints, or cyclic data - `inst-catch-copy-failure`
    1. [x] - `p1` - Report it through the shipped logger; the record does not reach connectors, and nothing reaches the caller - `inst-report-copy-failure`
    2. [x] - `p1` - **RETURN** nothing - `inst-return-copy-failed`
-4. [x] - `p1` - Pass the frozen copy to dispatch at once, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record` - `inst-pass-at-once`
+4. [x] - `p1` - Hand the record to the consent rules, using `cpt-frontx-telemetry-algo-consent-gate-apply-rules`; they make the frozen copy as above and pass it to dispatch, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record`, hold it, or drop the record - `inst-pass-at-once`
 5. [x] - `p1` - **RETURN** nothing; the stage keeps no reference to the record or the copy - `inst-return-passed`
 
 ### Record Dispatch
@@ -494,7 +494,7 @@ After enrichment, the events manager **MUST** hand every record toward connector
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-connector-delivery-gate-pass-through`
 
-The consent gate's stage before dispatch **MUST** make one JSON-like deep copy of each record handed toward connectors (a date becomes its ISO string, a map a plain object with string keys, a set and byte data arrays of numbers, a number that is not finite null, and an undefined property is left out), freeze it deeply with nested data included, and pass that same copy to dispatch at once. Where no connector has a handler for a record, the stage **MUST** return without copying. The record the collector queue holds **MUST** stay the original. If the copy fails, because the data holds a function, a symbol, a bigint or a cycle, the record **MUST NOT** reach connectors, the failure **MUST** go through the shipped logger, and nothing **MUST** reach the caller. This stage **MUST** be released only together with the consent feature, which replaces "pass at once" with its consent rules, so connectors never receive records without a consent check.
+The consent gate's stage before dispatch **MUST** make one JSON-like deep copy of each record handed toward connectors (a date becomes its ISO string, a map a plain object with string keys, a set and byte data arrays of numbers, a number that is not finite null, and an undefined property is left out), freeze it deeply with nested data included, and hand that same copy on as the consent rules decide. The copy **MUST** be made by the consent rules, only for a record they pass or hold, so a dropped record is never copied. Where no connector has a handler for a record, the stage **MUST** return without copying. The record the collector queue holds **MUST** stay the original. If the copy fails, because the data holds a function, a symbol, a bigint or a cycle, the record **MUST NOT** reach connectors, the failure **MUST** go through the shipped logger, and nothing **MUST** reach the caller. This stage **MUST** hand every record to the consent rules (`cpt-frontx-telemetry-algo-consent-gate-apply-rules`) and be released only together with the consent feature, so connectors never receive records without a consent check.
 
 **Verification**: Unit tests record events whose data holds a date, a map, a set, byte data, a number that is not finite, an undefined property and array item, and a class instance, and assert that a connector receives the JSON-like conversion of each. They record events whose data holds a function, a symbol, a bigint or a cycle, and assert that no connector receives each, the logger reports the failure once, and the caller sees no error. They assert that the same object reached twice is copied twice, that the copy is frozen all the way down, and that the collector's record is still the original.
 

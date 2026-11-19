@@ -86,6 +86,7 @@ it cannot be started again.
 | `sessionDuration`   | `number`  | `1800000`  | Inactivity window in milliseconds before a new session id is minted. 30 minutes.                                                                                  |
 | `connectors`        | `TelemetryConnector[]` | `[]` | Application connectors that receive every record. See *Connectors*. |
 | `collector`         | `boolean` | `true` without connectors, `false` with them | Switches the shipped collector (queue and POST) on or off. |
+| `consent`           | `{ unsetCountsAsGranted?: boolean; holdWhileUnknown?: boolean }` | `{ unsetCountsAsGranted: false, holdWhileUnknown: true }` | How the consent gate treats connectors while the application has not set consent. See *Consent*. |
 | `namespace`         | `string`  | none       | Required when a catalog is given; must equal the catalog's first name segment. See *Declared events*. |
 | `apiVersion`        | `number`  | `1`        | Event envelope version. `2` hoists fields shared by every record in a multi-record batch into `meta`, and drops `context_user_id` and `context_tenant_id`.         |
 
@@ -104,10 +105,12 @@ it cannot be started again.
 | `record(name, data)`   | `undefined`       | Record a declared event from the catalog. Never throws. See *Declared events*.      |
 | `acceptsReports()`     | `boolean`         | Whether this client takes reports anywhere. Fixed at construction.                  |
 | `getRecords()`         | `TelemetryRecord[]` | The latest enriched records (up to 1000) in a development build; `[]` in production. |
+| `setConsent(state)`    | `void`            | Set the consent state: `'unknown'`, `'granted'` or `'denied'`. Governs connectors only. Never throws; an invalid value is ignored and logged. See *Consent*. |
+| `resetIdentity()`      | `void`            | Clear the user id from later events and tell connectors the identity is cleared, as consent allows. Never throws. |
 | `plugin(...plugins)`   | `TelemetryService`| Register plugins. Falsy entries are ignored, so `cond && myPlugin()` is safe.       |
 | `destroy()`            | `void`            | Run the `destroy` hooks, send the queue, then call every connector's `onFlush` and `onShutdown`, remove listeners (page listeners included), stop collecting. |
 
-All methods except `logEvent`, `record`, `acceptsReports`, `getRecords` and `destroy` are chainable.
+All methods except `logEvent`, `record`, `acceptsReports`, `getRecords`, `setConsent`, `resetIdentity` and `destroy` are chainable.
 
 `acceptsReports()` is `false` only in a production build whose client has no application
 connector and the collector switched off; it is `true` in every other case: an application
@@ -136,8 +139,41 @@ A connector is an object the application writes for its own analytics backend. P
 - `onFlush()` - when the page becomes hidden, on `pagehide`, and at `destroy()`.
 - `onShutdown()` - at `destroy()`, after the flush.
 
-The consent gate's rules come with the consent feature; until it lands, nothing calls
-`onIdentityChange` or `onConsentChange`.
+### Consent
+
+The client keeps one consent state, `TelemetryConsentState`: `'unknown'` (the start value),
+`'granted'` or `'denied'`. The application sets it with `setConsent(state)`, before or after
+`start()`. Only the application shell decides consent; a microfrontend cannot change it. Consent
+governs connectors only:
+
+- **Granted**: records and identity changes reach connectors at once.
+- **Unknown**: records are held, up to 1000; when the hold is full the oldest is dropped (a
+  development build says so once). The latest identity is held too. A grant passes the consent
+  change, then the held identity, then the held records in order. With
+  `consent.holdWhileUnknown: false` those records are dropped instead of held.
+- **Denied**: nothing reaches connectors except the consent change itself, and whatever was held
+  is dropped. After a denial, records carry no user fields until a new identity is set.
+
+With the default options a client that supplies connectors sends them nothing until the
+application calls `setConsent('granted')` (or sets `consent.unsetCountsAsGranted: true`), because
+records made while consent is unknown wait in the hold of at most 1000. With
+`unsetCountsAsGranted` on, an unknown state, never set or set to `'unknown'`, counts as granted,
+so nothing is held.
+
+At `start()` every connector's `onConsentChange` gets the effective state once, followed by an
+identity given before start if the state allows it. `onConsentChange` is called again only when
+the effective state changes; setting the same state passes nothing.
+
+`identify(id)` keeps stamping later records as before, and passes the identity to connectors as
+consent allows. `resetIdentity()` clears the stamp and passes a cleared identity (`undefined`):
+at once when granted, held for the grant when unknown, dropped when denied.
+
+A call to `setConsent`, `identify` or `resetIdentity` made from a connector handler waits until the
+current gate step finishes, then runs in order. After `destroy()` the three methods do nothing.
+
+The shipped collector is unaffected: it does not read the consent state, so an application that
+uses only the collector delivers as before. Gate it yourself by calling `start()` only once the
+user has agreed.
 
 `collector` switches the shipped collector (the queue and its POST). It defaults to on without
 connectors and off with them; turn it on to run both side by side (a development build says so in
@@ -197,6 +233,12 @@ console entry, the latest 1000 are kept for `getRecords()`, and notices explain 
 example that no connector is configured). In production `getRecords()` returns `[]`.
 
 ## Changes in 0.4.0
+
+- Consent: connectors now receive records and identity changes only as consent allows. New
+  `setConsent(state)` and `resetIdentity()` client methods, a `consent` option
+  (`unsetCountsAsGranted`, default `false`; `holdWhileUnknown`, default `true`), and the
+  `TelemetryConsentState` type. With the defaults, connectors get nothing until consent is granted;
+  records made before that are held, up to 1000. The shipped collector is unchanged.
 
 - `destroy()`: when no teardown hook threw, an error from the final send is now thrown after the
   connectors are flushed and shut down, instead of at once.

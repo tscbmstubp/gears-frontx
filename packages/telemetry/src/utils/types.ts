@@ -50,7 +50,25 @@ export type TelemetryNamespaceOption<C extends object> = [CatalogName<C>] extend
 export type TelemetryConfig<C extends object = TelemetryNoCatalog> = TelemetryConfigBase &
   TelemetryNamespaceOption<C>;
 
+/** Options for the consent gate. */
+export type TelemetryConsentOptions = {
+  /**
+   * An unknown state, never set or set to unknown, counts as granted.
+   * @default false
+   */
+  unsetCountsAsGranted?: boolean;
+  /**
+   * Records made while the effective state is unknown wait in the hold; with `false` they are dropped.
+   * @default true
+   */
+  holdWhileUnknown?: boolean;
+};
+
 export type TelemetryConfigBase = {
+  /**
+   * Consent gate options. Both flags are optional; see {@link TelemetryConsentOptions} for defaults.
+   */
+  consent?: TelemetryConsentOptions;
   /**
    * Key prefix to store data in localStorage
    */
@@ -148,7 +166,7 @@ export type TelemetryContext = {
   getTelemetryState: () => DerivedTelemetryState;
   /** Connector dispatch: state, handler depth and the record/signal entries. */
   dispatch: ConnectorDispatch;
-  /** The consent gate's stage: copies, freezes and hands a record to dispatch. */
+  /** The consent gate's stage: hands a record to the consent rules, which drop, hold or pass a frozen copy. */
   gateStage: (record: TelemetryRecord) => void;
   /** The dev inspector; a no-op in the production build. */
   inspector: Inspector;

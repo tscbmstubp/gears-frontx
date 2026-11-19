@@ -8,11 +8,20 @@ export function createUserInfoManager(context: TelemetryContext) {
 
   return {
     identify,
+    clear,
   };
 
   function identify(newUserId: TelemetryUserId) {
     userId = newUserId;
   }
+
+  // Removes the identifier `identify` stamps, so later records carry no `context_user_id`
+  // from this path.
+  // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-identity-reset:p1:inst-rst-clear-stamp
+  function clear() {
+    userId = undefined;
+  }
+  // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-identity-reset:p1:inst-rst-clear-stamp
 
   function onEvent(record: TelemetryRecord) {
     // `0` is a legal TelemetryUserId, so absence is the only reason to skip.

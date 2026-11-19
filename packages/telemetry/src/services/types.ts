@@ -7,6 +7,7 @@ import type {
 } from '../catalog/types';
 import type { TelemetryLogEventParams, TelemetryRecord, TelemetryUserId } from '../utils/eventTypes';
 import type { TelemetryPluginOption } from '../utils/types';
+import type { TelemetryConsentState } from '../connectors/types';
 
 export type TelemetryService<C extends object = TelemetryNoCatalog> = {
   plugin: (...newPlugins: TelemetryPluginOption[]) => TelemetryService<C>;
@@ -20,6 +21,13 @@ export type TelemetryService<C extends object = TelemetryNoCatalog> = {
   record: TelemetryRecordEvent<C>;
   acceptsReports: () => boolean;
   identify: (id: TelemetryUserId) => TelemetryService<C>;
+  /**
+   * Sets the application's consent answer. Returns nothing and never throws; a value that is not
+   * a consent state is ignored and logged.
+   */
+  setConsent: (state: TelemetryConsentState) => void;
+  /** Clears the identity `identify` set. Returns nothing and never throws. */
+  resetIdentity: () => void;
   /**
    * The records the development build's inspector kept for this client, oldest first (at most
    * 1000). Always `[]` in the production build.

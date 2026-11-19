@@ -1,16 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createConnectorDispatch } from '../connectors/dispatch';
-import { passThroughRecord } from '../connectors/consentGate';
+import { createConsentGate, createGateStage } from '../connectors/consentGate';
 import type { TelemetryConnector } from '../connectors/types';
 
 const rec = (data: unknown = { a: { b: 1 } }) => data as never;
 const logger = () => ({ logMessage: vi.fn(), logError: vi.fn() });
 
+// Consent counts as granted, so these tests see the pass-through stage deliver at once.
+function gateFor(
+  connectors: TelemetryConnector[],
+  d: ReturnType<typeof createConnectorDispatch>,
+  log: ReturnType<typeof logger>,
+) {
+  const gate = createConsentGate({
+    consent: { unsetCountsAsGranted: true },
+    inspector: { notice: vi.fn() },
+  });
+  return createGateStage(connectors, d.dispatchRecord, log, gate, () => false);
+}
+
 function setup(connectors: TelemetryConnector[]) {
   const d = createConnectorDispatch(connectors);
   d.open();
   const log = logger();
-  const send = (data: unknown) => passThroughRecord(rec(data), d.dispatchRecord, log);
+  const stage = gateFor(connectors, d, log);
+  const send = (data: unknown) => stage(rec(data));
   return { d, log, send };
 }
 
@@ -226,12 +240,13 @@ describe('connector dispatch', () => {
     const c = { onRecord: vi.fn(), onFlush: vi.fn(), onIdentityChange: vi.fn() };
     const d = createConnectorDispatch([c]);
     const log = logger();
+    const stage = gateFor([c], d, log);
     expect(d.getState()).toBe('WAITING');
-    passThroughRecord(rec({}), d.dispatchRecord, log);
+    stage(rec({}));
     d.dispatchFlush();
     d.open();
     d.close();
-    passThroughRecord(rec({}), d.dispatchRecord, log);
+    stage(rec({}));
     d.dispatchIdentityChange(undefined);
     d.requestFlush();
     expect(c.onRecord).not.toHaveBeenCalled();
