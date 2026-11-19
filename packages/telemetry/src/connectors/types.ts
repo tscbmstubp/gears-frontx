@@ -23,7 +23,7 @@ export type TelemetryConnector = {
   // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-connector-reads:p1:inst-cr-write-handlers
   /** Called with the identity that was set, or `undefined` when it was cleared. */
   onIdentityChange?: (id: TelemetryUserId | undefined) => void | Promise<void>;
-  /** Called with the effective consent state when it changes. */
+  /** Called once at start with the effective consent state, and again on every change of the effective state. */
   onConsentChange?: (state: TelemetryConsentState) => void | Promise<void>;
   // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-connector-reads:p1:inst-cr-write-handlers
   /**

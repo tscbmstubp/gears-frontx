@@ -82,7 +82,11 @@ export function createTelemetryWithBuildKind<C extends object = TelemetryNoCatal
   // (`unsetCountsAsGranted` false, `holdWhileUnknown` true).
   // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-create-client
   // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-init-gate
-  const gate = createConsentGate({ consent: configRaw.consent, inspector });
+  const gate = createConsentGate({
+    consent: configRaw.consent,
+    inspector,
+    hasRecordHandler: config.connectors.some((connector) => !!connector.onRecord),
+  });
   // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-init-gate
   // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-set-consent:p1:inst-set-create-client
   const context: TelemetryContext = {

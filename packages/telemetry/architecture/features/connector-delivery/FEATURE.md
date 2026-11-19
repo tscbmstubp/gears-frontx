@@ -354,7 +354,7 @@ This is the stage of `cpt-frontx-telemetry-component-consent-gate` that sits bef
 
 **Change to shipped behaviour**: this feature changes the shipped step `inst-teardown-events-last` of `cpt-frontx-telemetry-algo-event-collection-destroy`. Today, when no teardown hook threw, a failed final send throws at once. With this feature, that error is held until the steps below have run, and is then thrown. The design allows this, because teardown goes on and the caller still gets the error.
 
-**Consent attach point**: the consent feature drops the gate's held records and held identity between `inst-close-dispatch` and `inst-remove-page-listeners`. This feature adds nothing there.
+**Consent attach point**: the consent feature drops the gate's held records, held identity, kept identity and queued calls, and closes the gate, between `inst-close-dispatch` and `inst-remove-page-listeners`. This feature adds nothing there.
 
 **Steps**:
 1. [x] - `p1` - Run after the shipped events-manager teardown, whether or not a teardown hook or the final send threw. The shipped guards for a missing `window` and a repeated destroy return before this point, so these steps run at most once - `inst-attach-after-shipped-teardown`

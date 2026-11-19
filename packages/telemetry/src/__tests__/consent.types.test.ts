@@ -32,8 +32,9 @@ function negatives() {
   return [bad, wrong, connector];
 }
 
+// The compile-time check is `npm run type-check:test`; the vitest case only keeps the functions referenced.
 describe('consent types', () => {
-  it('compiles the positive and negative cases', () => {
+  it('keeps the type-only cases out of the runtime', () => {
     expect(typeof positives).toBe('function');
     expect(typeof negatives).toBe('function');
   });

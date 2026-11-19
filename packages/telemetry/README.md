@@ -134,8 +134,8 @@ A connector is an object the application writes for its own analytics backend. P
 - `onMeasurement(measurement)` - reserved; nothing calls it yet.
 - `onIdentityChange(id)` - when the identity is set, or cleared (`undefined`), as the consent gate
   passes it on.
-- `onConsentChange(state)` - when the effective consent state changes, as the consent gate passes
-  it on.
+- `onConsentChange(state)` - once at start with the effective consent state, and again on every
+  change of the effective state, as the consent gate passes it on.
 - `onFlush()` - when the page becomes hidden, on `pagehide`, and at `destroy()`.
 - `onShutdown()` - at `destroy()`, after the flush.
 
@@ -147,8 +147,9 @@ The client keeps one consent state, `TelemetryConsentState`: `'unknown'` (the st
 governs connectors only:
 
 - **Granted**: records and identity changes reach connectors at once.
-- **Unknown**: records are held, up to 1000; when the hold is full the oldest is dropped (a
-  development build says so once). The latest identity is held too. A grant passes the consent
+- **Unknown**: records are held, up to 1000 (the hold counts records, not bytes); when the hold
+  is full the oldest is dropped (a development build says so once). The latest identity is held
+  too. A grant passes the consent
   change, then the held identity, then the held records in order. With
   `consent.holdWhileUnknown: false` those records are dropped instead of held.
 - **Denied**: nothing reaches connectors except the consent change itself, and whatever was held
@@ -157,9 +158,11 @@ governs connectors only:
   allows it and that identity has been passed to connectors. An `identify` made while consent is
   denied is dropped.
 
-With the default options a client that supplies connectors sends them nothing until the
-application calls `setConsent('granted')` (or sets `consent.unsetCountsAsGranted: true`), because
-records made while consent is unknown wait in the hold of at most 1000. With
+With the default options a client that supplies connectors passes them no records and no identity
+until the application calls `setConsent('granted')` (or sets `consent.unsetCountsAsGranted: true`),
+because records made while consent is unknown wait in the hold of at most 1000. The consent options
+are strict: `unsetCountsAsGranted` is on only when it is exactly `true`, and `holdWhileUnknown` is
+off only when it is exactly `false`. With
 `unsetCountsAsGranted` on, an unknown state, never set or set to `'unknown'`, counts as granted,
 so nothing is held.
 
@@ -172,7 +175,7 @@ consent allows. `resetIdentity()` clears the stamp and passes a cleared identity
 at once when granted, held for the grant when unknown, dropped when denied.
 
 A call to `setConsent`, `identify` or `resetIdentity` made from a connector handler waits until the
-current gate step finishes, then runs in order. After `destroy()` the three methods do nothing.
+current gate step finishes, then runs in order. After `destroy()` nothing reaches connectors.
 
 The shipped collector is unaffected: it does not read the consent state, so an application that
 uses only the collector delivers as before. Gate it yourself by calling `start()` only once the
@@ -233,15 +236,17 @@ The main entry is built twice. `dist/` is the production build. `dist/developmen
 development build, resolved through the `development` export condition (Vite uses it in dev mode).
 Only the development build carries the inspector: each enriched record is shown as one grouped
 console entry, the latest 1000 are kept for `getRecords()`, and notices explain the setup (for
-example that no connector is configured). In production `getRecords()` returns `[]`.
+example that no connector is configured). The inspector shows every record the application makes,
+before the consent rules, so it also lists records the gate holds or drops; it is not a log of what
+connectors received. In production `getRecords()` returns `[]`.
 
 ## Changes in 0.4.0
 
 - Consent: connectors now receive records and identity changes only as consent allows. New
   `setConsent(state)` and `resetIdentity()` client methods, a `consent` option
   (`unsetCountsAsGranted`, default `false`; `holdWhileUnknown`, default `true`), and the
-  `TelemetryConsentState` type. With the defaults, connectors get nothing until consent is granted;
-  records made before that are held, up to 1000. The shipped collector is unchanged.
+  `TelemetryConsentState` type. With the defaults, connectors get no records and no identity until
+  consent is granted; records made before that are held, up to 1000. The shipped collector is unchanged.
 
 - `destroy()`: when no teardown hook threw, an error from the final send is now thrown after the
   connectors are flushed and shut down, instead of at once.

@@ -398,7 +398,7 @@ describe('destroy drop (gate level)', () => {
     gate.identify('kept', d);
     open.value = true;
     gate.applyRules({ name: 'held' } as TelemetryRecord, d);
-    gate.holdIdentity({ id: 'held' });
+    gate.testHooks.holdIdentity({ id: 'held' });
     gate.runBusy(() => {
       gate.setConsent('granted', d);
       gate.destroyDrop();

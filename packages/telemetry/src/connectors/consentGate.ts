@@ -13,6 +13,8 @@
 // @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-same-state-passes-nothing:p1
 // @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-serialized-operations:p1
 // @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-drop-before-copy:p1
+// @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-start-hint:p1
+// @cpt-dod:cpt-frontx-telemetry-dod-consent-gate-queue-drain-limit:p1
 // @cpt-dod:cpt-frontx-telemetry-dod-connector-delivery-gate-pass-through:p1
 
 // Consent gate. The pass-through stage hands each record to the consent rules, which drop,
@@ -23,6 +25,7 @@ import type { TelemetryUserId } from '../utils/eventTypes';
 import type { TelemetryConsentOptions } from '../utils/types';
 import type { Inspector } from '../inspector/inspector';
 import type { TelemetryConnector, TelemetryConsentState } from './types';
+import { frozenCopy, setOwn } from './jsonLike';
 
 // Internal: one gate's state, created per client. Not exported from src/index.ts.
 export type ConsentGateState = {
@@ -54,109 +57,9 @@ export type ConsentGateAccessor = {
   closed: () => boolean;
 };
 
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const key of Reflect.ownKeys(value)) {
-      deepFreeze((value as Record<PropertyKey, unknown>)[key]);
-    }
-  }
-  return value;
-}
-
-// Sets one own property, also for a key such as "__proto__" that plain assignment would treat
-// as the prototype.
-function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
-  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
-}
-
-// Builds a fresh JSON-like copy of a value: only strings, finite numbers, booleans, null, arrays
-// and plain objects. It follows JSON's rules except that no `toJSON` method is called, since that
-// would run application code inside the gate. Data with no JSON form throws. `path` holds the
-// objects being converted, so a cycle throws while the same object reached twice is copied twice.
-function toJsonLike(value: unknown, path: Set<object>): unknown {
-  switch (typeof value) {
-    case 'string':
-    case 'boolean':
-      return value;
-    case 'undefined':
-      return undefined;
-    case 'number':
-      // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-json-rules
-      return Number.isFinite(value) ? value : null;
-      // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-json-rules
-    case 'object':
-      break;
-    default:
-      throw new TypeError(`Telemetry: a ${typeof value} has no JSON form`);
-  }
-  if (value === null) {
-    return null;
-  }
-  const source = value as object;
-  // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-dates
-  if (source instanceof Date) {
-    return Number.isNaN(source.getTime()) ? null : source.toISOString();
-  }
-  // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-dates
-  if (path.has(source)) {
-    throw new TypeError('Telemetry: cyclic data has no JSON form');
-  }
-  path.add(source);
-  try {
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-maps
-    if (source instanceof Map) {
-      const object: Record<string, unknown> = {};
-      for (const [key, item] of source) {
-        const converted = toJsonLike(item, path);
-        const name = String(key);
-        if (converted === undefined) {
-          delete object[name];
-        } else {
-          setOwn(object, name, converted);
-        }
-      }
-      return object;
-    }
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-maps
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-sets-bytes
-    let items: Iterable<unknown> | undefined;
-    if (source instanceof Set) {
-      items = source;
-    } else if (source instanceof ArrayBuffer) {
-      items = new Uint8Array(source);
-    } else if (ArrayBuffer.isView(source)) {
-      items =
-        source instanceof DataView
-          ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
-          : (source as unknown as Iterable<unknown>);
-    } else if (Array.isArray(source)) {
-      items = source;
-    }
-    if (items) {
-      const list: unknown[] = [];
-      for (const item of items) {
-        list.push(toJsonLike(item, path) ?? null);
-      }
-      return list;
-    }
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-sets-bytes
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-json-rules
-    const object: Record<string, unknown> = {};
-    for (const key of Object.keys(source)) {
-      const converted = toJsonLike((source as Record<string, unknown>)[key], path);
-      if (converted !== undefined) {
-        setOwn(object, key, converted);
-      }
-    }
-    return object;
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-copy-json-rules
-  } finally {
-    path.delete(source);
-  }
-}
-
 const HOLD_LIMIT = 1000;
+// The most queued operations one outermost operation runs; the rest are dropped.
+const QUEUE_DRAIN_LIMIT = 100;
 const USER_FIELDS = [
   'context_user_id',
   'context_user_distinct_id',
@@ -166,10 +69,9 @@ const USER_FIELDS = [
   'context_user_last_name',
 ] as const;
 
-// The per-client gate closure: its state plus the building blocks later phases wire together.
-// Internal: exported from this module only, never from src/index.ts.
-export type ConsentGate = {
-  accessor: ConsentGateAccessor;
+// The building blocks of the gate, for tests only. They bypass the queue and the input
+// validation, so the client never uses them.
+export type ConsentGateTestHooks = {
   setState: (state: TelemetryConsentState) => void;
   effectiveState: () => TelemetryConsentState;
   holdAdd: (copy: Readonly<TelemetryRecord>) => void;
@@ -177,25 +79,33 @@ export type ConsentGate = {
   removeUserFields: (copy: Readonly<TelemetryRecord>) => Readonly<TelemetryRecord>;
   raise: () => void;
   lower: (identity: TelemetryUserId | undefined) => void;
+  /** Runs a setConsent / identify / resetIdentity gate operation now, or queues it. */
+  runQueued: (operation: () => void) => void;
+  /** Sets the held identity directly. */
+  holdIdentity: (identity: ConsentGateState['heldIdentity']) => void;
+  /** Passes an identity change and lowers the re-grant marker when the identity is set. */
+  passIdentity: (id: TelemetryUserId | undefined, deps: Pick<ConsentChangeDeps, 'dispatchIdentityChange'>) => void;
+};
+
+// The per-client gate closure: what the client uses. Internal: exported from this module only,
+// never from src/index.ts.
+export type ConsentGate = {
+  accessor: ConsentGateAccessor;
   applyRules: (record: TelemetryRecord, deps: ConsentRulesDeps) => void;
   /** Marks the gate busy for a never-queued operation (record rules, start pass, destroy drop). */
   runBusy: (operation: () => void) => void;
-  /** Runs a setConsent / identify / resetIdentity gate operation now, or queues it. */
-  runQueued: (operation: () => void) => void;
   /** The consent change, run through the queue. */
   setConsent: (state: TelemetryConsentState, deps: ConsentChangeDeps) => void;
-  /** Sets the held identity directly (test building block). */
-  holdIdentity: (identity: ConsentGateState['heldIdentity']) => void;
   /** Stamps the identifier at once, then runs identity through the gate through the queue. */
   identify: (id: TelemetryUserId, deps: IdentityDeps) => void;
   /** Clears the stamp at once, then runs the identity reset through the queue. */
   resetIdentity: (deps: IdentityDeps) => void;
-  /** Passes an identity change and lowers the re-grant marker when the identity is set. */
-  passIdentity: (id: TelemetryUserId | undefined, deps: Pick<ConsentChangeDeps, 'dispatchIdentityChange'>) => void;
   /** The start-time pass of the effective state and the kept identity, run once after dispatch opens. */
   startPass: (deps: IdentityDeps) => void;
   /** Drops everything held, kept or queued and closes the gate; run once after dispatch closes. */
   destroyDrop: () => void;
+  /** For tests only: bypasses the queue and the validation. */
+  testHooks: ConsentGateTestHooks;
 };
 
 // The shipped user-info manager's stamping operations, run at once and never queued.
@@ -221,15 +131,26 @@ export type ConsentRulesDeps = {
   isDestroyed: () => boolean;
 };
 
+// The development hint the start pass shows when consent is not yet granted.
+function startHint(effective: TelemetryConsentState, holdWhileUnknown: boolean): string {
+  if (effective === 'unknown' && holdWhileUnknown) {
+    return `consent is unknown: records for connectors wait in the hold (up to ${HOLD_LIMIT}) until setConsent('granted'); set consent.unsetCountsAsGranted to pass them at once`;
+  }
+  return `consent is ${effective}${effective === 'unknown' ? ' and holding is off' : ''}: records for connectors are dropped until setConsent('granted')`;
+}
+
 export function createConsentGate(params: {
   consent?: TelemetryConsentOptions;
   inspector: Pick<Inspector, 'notice'>;
+  /** Whether any connector has a record handler; the start pass hints at consent only then. */
+  hasRecordHandler?: boolean;
 }): ConsentGate {
   const state: ConsentGateState = {
     consent: 'unknown',
     options: {
-      unsetCountsAsGranted: params.consent?.unsetCountsAsGranted ?? false,
-      holdWhileUnknown: params.consent?.holdWhileUnknown ?? true,
+      // Only exactly true turns the first on and only exactly false turns the second off.
+      unsetCountsAsGranted: params.consent?.unsetCountsAsGranted === true,
+      holdWhileUnknown: params.consent?.holdWhileUnknown !== false,
     },
     hold: [],
     heldIdentity: undefined,
@@ -240,6 +161,7 @@ export function createConsentGate(params: {
     queue: [],
   };
   let noticeShown = false;
+  let drainNoticeShown = false;
 
   // @cpt-algo:cpt-frontx-telemetry-algo-consent-gate-effective-state:p1
   const effectiveState = (): TelemetryConsentState => {
@@ -276,11 +198,7 @@ export function createConsentGate(params: {
   };
 
   const setState = (next: TelemetryConsentState): void => {
-    const before = effectiveState();
     state.consent = next;
-    if (before !== 'denied' && effectiveState() === 'denied') {
-      raise();
-    }
   };
 
   // @cpt-algo:cpt-frontx-telemetry-algo-consent-gate-hold:p1
@@ -383,29 +301,57 @@ export function createConsentGate(params: {
 
   // Marks the gate busy for an operation that is never queued (applying the rules to a record,
   // the start pass, the destroy drop). Nested inside a running operation it simply runs; as the
-  // outermost operation it drains the queue once it ends.
+  // outermost operation it drains the queue once it ends, also when an operation threw, and then
+  // rethrows the first error so the caller still sees it.
   const runBusy = (operation: () => void): void => {
     if (state.busy) {
       operation();
       return;
     }
+    let firstError: { error: unknown } | undefined;
+    const attempt = (run: () => void): void => {
+      try {
+        run();
+      } catch (error) {
+        // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-remember-throw
+        firstError ??= { error };
+        // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-remember-throw
+      }
+    };
     // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-run
     state.busy = true;
+    attempt(operation);
     // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-run
-    try {
-      operation();
-      // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-each-queued
-      for (let next = state.queue.shift(); next; next = state.queue.shift()) {
-        // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-run-queued
-        next();
-        // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-run-queued
+    // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-each-queued
+    let ran = 0;
+    while (state.queue.length > 0) {
+      // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-check-limit
+      if (ran >= QUEUE_DRAIN_LIMIT) {
+        state.queue = [];
+        if (!drainNoticeShown) {
+          drainNoticeShown = true;
+          // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-limit-notice
+          params.inspector.notice(
+            'connector handlers keep calling setConsent, identify or resetIdentity; the remaining queued calls were dropped',
+          );
+          // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-limit-notice
+        }
+        break;
       }
-      // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-each-queued
-    } finally {
-      // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-return
-      state.busy = false;
-      // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-return
+      // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-check-limit
+      ran += 1;
+      const next = state.queue.shift() as () => void;
+      // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-run-queued
+      attempt(next);
+      // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-run-queued
     }
+    // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-each-queued
+    // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-return
+    state.busy = false;
+    if (firstError) {
+      throw firstError.error;
+    }
+    // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-operation-queue:p1:inst-q-return
   };
 
   // Runs a setConsent, identify or resetIdentity gate operation now, or queues it while another
@@ -486,11 +432,7 @@ export function createConsentGate(params: {
       // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-consent-change:p1:inst-chg-snapshot
       // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-consent-change:p1:inst-chg-release-identity
       if (identity !== undefined) {
-        if (deps.isDispatchOpen()) {
-          passIdentity(identity.id, deps);
-        } else {
-          state.keptIdentity = identity;
-        }
+        passIdentity(identity.id, deps);
       }
       // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-consent-change:p1:inst-chg-release-identity
       // The connector may start its own sending after the consent change and the identity.
@@ -656,6 +598,13 @@ export function createConsentGate(params: {
       // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-read-state
       const effective = effectiveState();
       // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-read-state
+      // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-check-hint
+      if (params.hasRecordHandler && effective !== 'granted') {
+        // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-hint-notice
+        params.inspector.notice(startHint(effective, state.options.holdWhileUnknown));
+        // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-hint-notice
+      }
+      // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-check-hint
       // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-start-pass:p1:inst-sp-pass
       // @cpt-begin:cpt-frontx-telemetry-flow-consent-gate-connector-reads:p1:inst-cr-start-call
       deps.dispatchConsentChange(effective);
@@ -720,14 +669,9 @@ export function createConsentGate(params: {
     destroyDrop,
     applyRules,
     runBusy,
-    runQueued,
     setConsent,
     identify,
     resetIdentity,
-    passIdentity,
-    holdIdentity: (identity) => {
-      state.heldIdentity = identity;
-    },
     accessor: {
       holdSize: () => state.hold.length,
       heldIdentity: () => state.heldIdentity,
@@ -736,13 +680,20 @@ export function createConsentGate(params: {
       queueSize: () => state.queue.length,
       closed: () => state.closed,
     },
-    setState,
-    effectiveState,
-    holdAdd,
-    heldRecords: () => [...state.hold],
-    removeUserFields,
-    raise,
-    lower,
+    testHooks: {
+      setState,
+      effectiveState,
+      holdAdd,
+      heldRecords: () => [...state.hold],
+      removeUserFields,
+      raise,
+      lower,
+      runQueued,
+      holdIdentity: (identity) => {
+        state.heldIdentity = identity;
+      },
+      passIdentity,
+    },
   };
 }
 
@@ -779,29 +730,4 @@ export function passThroughRecord<T extends object>(
   // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-return-passed
   return;
   // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-return-passed
-}
-
-// The copy step of the pass-through stage, run by the consent rules only for a record that is
-// passed or held. Returns the deeply frozen copy, or undefined after logging a copy failure.
-export function frozenCopy<T extends object>(
-  data: T,
-  logger: Pick<TelemetryLoggerService, 'logError'>,
-): Readonly<T> | undefined {
-  // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-deep-copy
-  try {
-    const copy = toJsonLike(data, new Set()) as T;
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-deep-copy
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-deep-freeze
-    return deepFreeze(copy);
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-deep-freeze
-  } catch (error) {
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-catch-copy-failure
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-report-copy-failure
-    logger.logError('Telemetry: record dropped before connectors, copy failed', error);
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-report-copy-failure
-    // @cpt-begin:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-return-copy-failed
-    return undefined;
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-return-copy-failed
-    // @cpt-end:cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through:p1:inst-catch-copy-failure
-  }
 }

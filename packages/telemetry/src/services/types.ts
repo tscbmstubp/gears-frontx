@@ -26,7 +26,11 @@ export type TelemetryService<C extends object = TelemetryNoCatalog> = {
    * a consent state is ignored and logged.
    */
   setConsent: (state: TelemetryConsentState) => void;
-  /** Clears the identity `identify` set. Returns nothing and never throws. */
+  /**
+   * Clears the identity `identify` set. Returns nothing and never throws. Connectors: while consent
+   * is granted they get a cleared identity; while it is unknown a cleared identity is held and
+   * passed on a grant; while it is denied nothing reaches them.
+   */
   resetIdentity: () => void;
   /**
    * The records the development build's inspector kept for this client, oldest first (at most

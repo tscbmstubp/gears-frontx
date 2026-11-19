@@ -40,6 +40,7 @@ description: Feature specification of the telemetry consent gate: the consent st
   - [Holding Switched Off](#holding-switched-off)
   - [A Denial Drops What Waited](#a-denial-drops-what-waited)
   - [The Start Pass](#the-start-pass)
+  - [The Start Pass Shows A Development Hint](#the-start-pass-shows-a-development-hint)
   - [Destroy During The Start Pass](#destroy-during-the-start-pass)
   - [Identity Reset](#identity-reset-1)
   - [The Re-Grant Rule](#the-re-grant-rule)
@@ -48,6 +49,7 @@ description: Feature specification of the telemetry consent gate: the consent st
   - [The Same Effective State Passes Nothing](#the-same-effective-state-passes-nothing)
   - [The Consent Handler Receives A Typed State](#the-consent-handler-receives-a-typed-state)
   - [One Operation At A Time](#one-operation-at-a-time)
+  - [The Queue Drain Is Capped](#the-queue-drain-is-capped)
   - [Invalid Input And Non-Blocking Calls](#invalid-input-and-non-blocking-calls)
   - [Nothing Is Copied For A Dropped Record](#nothing-is-copied-for-a-dropped-record)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
@@ -71,8 +73,8 @@ A few terms used throughout:
 - A development notice is a console message that only the development build shows.
 
 The consent options live under one configuration option, `consent`, with two optional settings:
-- `unsetCountsAsGranted`, default `false`: an unknown state, whether it was never set or was set to unknown, counts as granted.
-- `holdWhileUnknown`, default `true`: records made while the effective state is unknown wait in the hold. With `false`, they are dropped.
+- `unsetCountsAsGranted`, default `false`: an unknown state, whether it was never set or was set to unknown, counts as granted. It is on only when it is exactly `true`.
+- `holdWhileUnknown`, default `true`: records made while the effective state is unknown wait in the hold. With `false`, they are dropped. It is off only when it is exactly `false`.
 
 The client gains two methods, `setConsent(state)` and `resetIdentity()`. The shipped `identify(id)` keeps its name and behaviour and now also goes through the gate. A connector's consent handler, `onConsentChange(state: TelemetryConsentState)`, keeps its place in the connector contract; only the type of its argument narrows from `unknown`.
 
@@ -87,7 +89,7 @@ Out of scope, and touched only where a step meets them:
 
 Realizes the consent and identity requirements, and the consent half of the sequence `cpt-frontx-telemetry-seq-connector-delivery-under-consent`. No connector may receive a record, or an identifier, that the user has not allowed. A user who has not answered yet loses nothing the application wants to keep: records wait, up to a bound, until the answer arrives.
 
-This feature replaces the step `inst-pass-at-once` of `cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through` with its consent rules. It attaches at the start attach point, between `inst-open-dispatch` and `inst-install-page-listeners` of `cpt-frontx-telemetry-algo-connector-delivery-start`, and at the destroy attach point, between `inst-close-dispatch` and `inst-remove-page-listeners` of `cpt-frontx-telemetry-algo-connector-delivery-destroy`. It does not change the connector-delivery feature; that feature names these points and leaves them to this one.
+This feature replaces the step `inst-pass-at-once` of `cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through` with its consent rules. It attaches at the start attach point, between `inst-open-dispatch` and `inst-install-page-listeners` of `cpt-frontx-telemetry-algo-connector-delivery-start`, and at the destroy attach point, between `inst-close-dispatch` and `inst-remove-page-listeners` of `cpt-frontx-telemetry-algo-connector-delivery-destroy`. It changes the connector-delivery feature in one place: that feature's pass-at-once step is replaced by the consent rules, and its copy step moves into them. The feature names the start and destroy points and leaves them to this one.
 
 **Requirements**: `cpt-frontx-telemetry-fr-consent-gate`, `cpt-frontx-telemetry-fr-identity-consent`, `cpt-frontx-telemetry-nfr-non-blocking-emission`
 
@@ -197,7 +199,7 @@ This feature replaces the step `inst-pass-at-once` of `cpt-frontx-telemetry-algo
    1. [x] - `p1` - Connector learns that records may now be sent, so it may start its own sending after the consent change and the identity - `inst-cr-may-send`
 5. [x] - `p1` - **ELSE IF** the new state is denied - `inst-cr-check-denied`
    1. [x] - `p1` - Connector learns that sending must stop; it clears whatever it holds for its backend, since the package cannot reach into it - `inst-cr-must-stop`
-6. [x] - `p1` - **RETURN** nothing; the connector never calls back into the gate - `inst-cr-return`
+6. [x] - `p1` - **RETURN** nothing; a connector handler may call `setConsent`, `identify` and `resetIdentity`, and those calls are queued and run after the running gate step - `inst-cr-return`
 
 ## 3. Processes / Business Logic (CDSL)
 
@@ -258,11 +260,11 @@ This replaces step `inst-pass-at-once` of `cpt-frontx-telemetry-algo-connector-d
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-algo-consent-gate-operation-queue`
 
-The gate runs one operation at a time. Its operations are `setConsent`, `identify`, `resetIdentity`, applying the rules to a record, the start pass and the destroy drop. A connector handler that the gate is dispatching to can call back into the client, for example `setConsent`. Such a call must not run in the middle of an operation, or connectors would see consent changes in different orders.
+The gate runs one operation at a time. Its operations are `setConsent`, `identify`, `resetIdentity`, applying the rules to a record and the start pass. A connector handler that the gate is dispatching to can call back into the client, for example `setConsent`. Such a call must not run in the middle of an operation, or connectors would see consent changes in different orders.
 
 **Input**: A call to `setConsent`, `identify` or `resetIdentity`
 
-**Output**: The call run now, or queued and run in arrival order right after the outermost gate operation ends
+**Output**: The call run now, or queued and run in arrival order right after the outermost gate operation ends; the first error any of them threw, rethrown to the outermost caller once the queue is empty
 
 **Steps**:
 1. [x] - `p1` - Run the part of the call that is not a gate rule at once: the shipped stamping of `identify` and the clearing of the stamp for `resetIdentity`. These do not reach connectors and are not queued - `inst-q-run-stamp`
@@ -270,10 +272,13 @@ The gate runs one operation at a time. Its operations are `setConsent`, `identif
    1. [x] - `p1` - Add the call to the end of the queue and **RETURN** nothing - `inst-q-enqueue`
 3. [x] - `p1` - Mark the gate busy and run the call's algorithm: `cpt-frontx-telemetry-algo-consent-gate-consent-change`, `cpt-frontx-telemetry-algo-consent-gate-identity-through-gate` or `cpt-frontx-telemetry-algo-consent-gate-identity-reset` - `inst-q-run`
 4. [x] - `p1` - **FOR EACH** queued call, oldest first, including calls added while this loop runs - `inst-q-each-queued`
-   1. [x] - `p1` - Run it as step `inst-q-run` says. Each call checks the destroyed state first, so a call queued before destroy is ignored after it - `inst-q-run-queued`
-5. [x] - `p1` - Mark the gate not busy, also when an operation threw, and **RETURN** nothing - `inst-q-return`
+   1. [x] - `p1` - **IF** 100 queued calls have already run in this loop, drop the rest of the queue and stop - `inst-q-check-limit`
+      1. [x] - `p1` - **IF** the development build has not shown this notice yet, show one development notice that connector handlers keep calling `setConsent`, `identify` or `resetIdentity` and the remaining queued calls were dropped - `inst-q-limit-notice`
+   2. [x] - `p1` - Run it as step `inst-q-run` says. Each call checks the destroyed state first, so a call queued before destroy is ignored after it - `inst-q-run-queued`
+5. [x] - `p1` - **IF** the running call or a queued call threw, remember the first error and go on, so a throw does not strand the queue and each later call still runs in arrival order - `inst-q-remember-throw`
+6. [x] - `p1` - Mark the gate not busy, then rethrow the first remembered error if there is one, so the caller still sees it, and **RETURN** nothing - `inst-q-return`
 
-Applying the rules to a record, the start pass and the destroy drop mark the gate busy in the same way, so a `setConsent`, `identify` or `resetIdentity` call made from a handler during them is queued. They are not queued themselves. A handler the gate does not run, such as a flush or shutdown handler, calls in while the gate is not busy, so its call runs at once. The destroy drop empties the queue.
+Applying the rules to a record and the start pass mark the gate busy in the same way, so a `setConsent`, `identify` or `resetIdentity` call made from a handler during them is queued. They are not queued themselves. A handler the gate does not run, such as a flush or shutdown handler, calls in while the gate is not busy, so its call runs at once. The destroy drop is not marked busy: it runs once after dispatch closes, clears the queue and closes the gate, so nothing queued can run after it.
 
 ### Consent Change
 
@@ -291,7 +296,7 @@ Applying the rules to a record, the start pass and the destroy drop mark the gat
 5. [x] - `p1` - Pass the new effective state to every connector at once, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-signal`. Before start, dispatch is WAITING, so no connector is called and the state is kept for the start pass - `inst-chg-pass-state`
 6. [x] - `p1` - **IF** the effective state is now granted - `inst-chg-check-granted`
    1. [x] - `p1` - Take the held records and the held identity out of the gate, and clear both in the gate, before releasing any of them, so the release cannot pass an item twice whatever happens during it - `inst-chg-snapshot`
-   2. [x] - `p1` - **IF** an identity was held, set or cleared, and dispatch is open, pass it as an identity change, using `cpt-frontx-telemetry-algo-consent-gate-identity-through-gate`. Before start, dispatch is WAITING and the identity stays kept for the start pass - `inst-chg-release-identity`
+   2. [x] - `p1` - **IF** an identity was held, set or cleared, pass it as an identity change, using `cpt-frontx-telemetry-algo-consent-gate-identity-through-gate` - `inst-chg-release-identity`
    3. [x] - `p1` - **FOR EACH** held record taken out, in the order the records were made - `inst-chg-each-held`
       1. [x] - `p1` - **IF** the client was destroyed during this release, stop at once and pass no more - `inst-chg-stop-destroyed`
       2. [x] - `p1` - Pass the record to dispatch as it was held, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record`. The re-grant decision was made when the gate received it, and is not made again - `inst-chg-pass-held`
@@ -357,14 +362,16 @@ This runs at the start attach point of `cpt-frontx-telemetry-algo-connector-deli
 **Steps**:
 1. [x] - `p1` - **IF** the client is destroyed, or the gate is closed, **RETURN** nothing at once - `inst-sp-check-closed`
 2. [x] - `p1` - Read the effective state, using `cpt-frontx-telemetry-algo-consent-gate-effective-state` - `inst-sp-read-state`
-3. [x] - `p1` - Pass it to every connector, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-signal`, even when it never changes later, so a connector learns the state it starts under - `inst-sp-pass`
-4. [x] - `p1` - **IF** the client was destroyed during that pass, **RETURN** at once: pass no kept identity, and let start install no listener and run no start step - `inst-sp-check-destroyed-after-state`
-5. [x] - `p1` - **IF** an identity was kept before start, handle it by the effective state read in step `inst-sp-read-state`, after the state has been passed - `inst-sp-check-kept`
+3. [x] - `p1` - **IF** at least one connector has a record handler and the effective state is not granted - `inst-sp-check-hint`
+   1. [x] - `p1` - Show one development notice. With unknown and holding on, it says records for connectors wait in the hold, up to 1000, until `setConsent('granted')`, or that `consent.unsetCountsAsGranted` passes them at once. With unknown and holding off, or with denied, it says records for connectors are dropped until `setConsent('granted')` - `inst-sp-hint-notice`
+4. [x] - `p1` - Pass it to every connector, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-signal`, even when it never changes later, so a connector learns the state it starts under - `inst-sp-pass`
+5. [x] - `p1` - **IF** the client was destroyed during that pass, **RETURN** at once: pass no kept identity, and let start install no listener and run no start step - `inst-sp-check-destroyed-after-state`
+6. [x] - `p1` - **IF** an identity was kept before start, handle it by the effective state read in step `inst-sp-read-state`, after the state has been passed - `inst-sp-check-kept`
    1. [x] - `p1` - **IF** the effective state is granted, pass it as an identity change, using `cpt-frontx-telemetry-algo-consent-gate-identity-through-gate`, which lowers the re-grant marker, and clear the kept identity - `inst-sp-kept-granted`
    2. [x] - `p1` - **ELSE IF** the effective state is unknown, leave it held as usual for a later grant - `inst-sp-kept-unknown`
    3. [x] - `p1` - **ELSE** the effective state is denied, drop it - `inst-sp-kept-denied`
-6. [x] - `p1` - **IF** the client was destroyed during that handling, **RETURN** at once with the same effect as step `inst-sp-check-destroyed-after-state` - `inst-sp-check-destroyed-after-kept`
-7. [x] - `p1` - **RETURN** nothing; start goes on to install the page-lifecycle listeners. Calls a handler made to `setConsent`, `identify` or `resetIdentity` during this pass were queued and run now - `inst-sp-return`
+7. [x] - `p1` - **IF** the client was destroyed during that handling, **RETURN** at once with the same effect as step `inst-sp-check-destroyed-after-state` - `inst-sp-check-destroyed-after-kept`
+8. [x] - `p1` - **RETURN** nothing; start goes on to install the page-lifecycle listeners. Calls a handler made to `setConsent`, `identify` or `resetIdentity` during this pass were queued and run now - `inst-sp-return`
 
 ### Destroy Drop
 
@@ -385,7 +392,7 @@ This runs at the destroy attach point of `cpt-frontx-telemetry-algo-connector-de
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-algo-consent-gate-regrant-removal`
 
-The reason this exists: the shipped user-info path may still stamp the identifier it was given before a denial. A record made after the denial could then carry an identifier the user withdrew consent for, even if it waits in the hold and is released later. So the decision is made when the gate receives the copy, whether the copy is then passed, held or dropped. A held record keeps that decision when it is released.
+The reason this exists: the shipped user-info path may still stamp the identifier it was given before a denial. A record made after the denial could then carry an identifier the user withdrew consent for, even if it waits in the hold and is released later. So the decision is made when the gate receives the copy, whether the copy is then passed, held or dropped. A held record keeps that decision when it is released. This means records held after a denial lose the user fields even when a new identity is passed first at the grant, because records held before that identity was supplied may still carry the earlier identifier.
 
 **Input**: One frozen copy the gate has just made for a record it will pass or hold, and the re-grant marker
 
@@ -553,6 +560,20 @@ At the start attach point, the gate **MUST** pass every connector with a consent
 **Touches**:
 - Entities: `Connector`, `TelemetryConsentState`
 
+### The Start Pass Shows A Development Hint
+
+- [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-consent-gate-start-hint`
+
+At the start pass, when at least one connector has a record handler and the effective state is not granted, the development build **MUST** show one notice that says what happens to records for connectors. With unknown and holding on, it says they wait in the hold, up to 1000, until `setConsent('granted')`, or that `consent.unsetCountsAsGranted` passes them at once. With unknown and holding off, or with denied, it says they are dropped until `setConsent('granted')`. It **MUST** show nothing when the state is granted or no connector has a record handler.
+
+**Verification**: Unit tests on the gate module start a gate with a record handler under unknown with holding on, unknown with holding off and denied, and assert one notice each with the matching text. They assert no notice under granted, with `unsetCountsAsGranted` on, and with no record handler.
+
+**Implements**:
+- `cpt-frontx-telemetry-algo-consent-gate-start-pass`
+
+**Touches**:
+- Entities: `Connector`, `TelemetryConsentState`
+
 ### Destroy During The Start Pass
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-consent-gate-destroy-during-start`
@@ -661,9 +682,9 @@ A connector's `onConsentChange` handler **MUST** receive a `TelemetryConsentStat
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-consent-gate-serialized-operations`
 
-The gate **MUST** run one operation at a time. A `setConsent`, `identify` or `resetIdentity` call that arrives while a gate operation is running **MUST** be queued and run in arrival order right after the outermost operation ends. A grant's release **MUST** run to completion first, and every connector **MUST** see the same order of consent changes. The gate **MUST** take the held records and the held identity out of itself and clear them before releasing them, so no item is passed twice. A call from a handler the gate does not run, such as a flush or shutdown handler, **MUST NOT** be queued.
+The gate **MUST** run one operation at a time. A `setConsent`, `identify` or `resetIdentity` call that arrives while a gate operation is running **MUST** be queued and run in arrival order right after the outermost operation ends. A grant's release **MUST** run to completion first, and every connector **MUST** see the same order of consent changes. The gate **MUST** take the held records and the held identity out of itself and clear them before releasing them, so no item is passed twice. A call from a handler the gate does not run, such as a flush or shutdown handler, **MUST NOT** be queued. A throw from an operation or from a queued call **MUST NOT** strand the queue: every queued call still runs in arrival order, the gate is left not busy, and the first error is rethrown to the outermost caller.
 
-**Verification**: A unit test supplies connectors whose `onConsentChange` calls `setConsent('denied')` during a grant. It asserts every connector ends with granted and then denied in that order, and that no record made after the denial reaches a connector. A second test supplies a connector whose record handler calls `setConsent('denied')` during the release of held records. It asserts the release completes, then the denial applies, and no record or identity is passed twice.
+**Verification**: A unit test supplies connectors whose `onConsentChange` calls `setConsent('denied')` during a grant. It asserts every connector ends with granted and then denied in that order, and that no record made after the denial reaches a connector. A second test supplies a connector whose record handler calls `setConsent('denied')` during the release of held records. It asserts the release completes, then the denial applies, and no record or identity is passed twice. A third test throws inside an operation with calls queued behind it, and asserts the queued calls ran in order, the gate is not busy afterwards and the error reached the caller.
 
 **Implements**:
 - `cpt-frontx-telemetry-algo-consent-gate-operation-queue`
@@ -671,6 +692,20 @@ The gate **MUST** run one operation at a time. A `setConsent`, `identify` or `re
 
 **Touches**:
 - Entities: `Record`, `Connector`, `TelemetryConsentState`
+
+### The Queue Drain Is Capped
+
+- [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-consent-gate-queue-drain-limit`
+
+The outermost gate operation **MUST** run at most 100 queued calls. When that limit is reached, the gate **MUST** drop the rest of the queue and, in the development build, show one notice the first time this happens. A connector handler that calls `setConsent`, `identify` or `resetIdentity` on every change therefore cannot keep the gate running forever.
+
+**Verification**: A unit test supplies a connector whose `onConsentChange` flips consent between granted and denied on every call. It asserts the first `setConsent` returns, one notice is shown, the queue is empty afterwards, and a later run shows no second notice.
+
+**Implements**:
+- `cpt-frontx-telemetry-algo-consent-gate-operation-queue`
+
+**Touches**:
+- Entities: `Connector`, `TelemetryConsentState`
 
 ### Invalid Input And Non-Blocking Calls
 
@@ -710,7 +745,7 @@ The gate **MUST** read the effective state before it copies a record. A record t
 - [x] The hold keeps at most 1000 records, drops the oldest first, and a development build shows one notice at the first drop.
 - [x] With `holdWhileUnknown` off, records made while consent is unknown are dropped, and a grant passes the consent change and any held identity but none of those records.
 - [x] A denial passes the consent change and drops the held records and the held identity.
-- [x] At start, every connector receives the effective state once.
+- [x] At start, every connector receives the effective state once, and a development build hints at what happens to records when consent is not granted and a connector has a record handler.
 - [x] A connector that destroys the client in its consent handler during start leaves no page listener, receives no identity, and no shipped start step runs.
 - [x] `resetIdentity()` clears the stamped identifier and passes a cleared identity change under granted, holds a cleared identity under unknown for the grant, and drops it under denial.
 - [x] After a denial, records the gate receives, passed or held, carry none of the six user fields until a new identity is passed; a held record keeps that decision on release, and records received after the new identity is passed carry it.
@@ -719,5 +754,6 @@ The gate **MUST** read the effective state before it copies a record. A record t
 - [x] Setting the same effective state passes nothing.
 - [x] `onConsentChange` receives a `TelemetryConsentState`.
 - [x] A call made from a connector handler during a gate operation is queued, a grant's release completes before a denial from a handler applies, and no item is passed twice.
+- [x] A throw inside a gate operation does not strand the queue, and a handler that calls back on every change cannot keep the gate running: the drain stops at 100 queued calls.
 - [x] An invalid consent value is ignored and logged as an error, the three methods never throw, and `identify` still returns the client.
 - [x] A record that is dropped for consent is not copied, so no copy failure is logged for it.

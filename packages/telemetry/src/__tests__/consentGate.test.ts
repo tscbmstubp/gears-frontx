@@ -23,7 +23,7 @@ describe('consent gate: effective state', () => {
     [false, 'unknown'],
     [true, 'granted'],
   ])('never set, unsetCountsAsGranted=%s -> %s', (flag, expected) => {
-    expect(make('development', { unsetCountsAsGranted: flag }).gate.effectiveState()).toBe(expected);
+    expect(make('development', { unsetCountsAsGranted: flag }).gate.testHooks.effectiveState()).toBe(expected);
   });
 
   it.each([
@@ -35,17 +35,17 @@ describe('consent gate: effective state', () => {
     [true, 'denied', 'denied'],
   ] as const)('unsetCountsAsGranted=%s, set %s -> %s', (flag, set, expected) => {
     const { gate } = make('development', { unsetCountsAsGranted: flag });
-    gate.setState(set);
-    expect(gate.effectiveState()).toBe(expected);
+    gate.testHooks.setState(set);
+    expect(gate.testHooks.effectiveState()).toBe(expected);
   });
 });
 
 describe('consent gate: hold', () => {
   it('keeps FIFO order and bounds at 1000, dropping the oldest', () => {
     const { gate } = make();
-    for (let i = 0; i < 1001; i++) gate.holdAdd(rec(i));
+    for (let i = 0; i < 1001; i++) gate.testHooks.holdAdd(rec(i));
     expect(gate.accessor.holdSize()).toBe(1000);
-    const held = gate.heldRecords();
+    const held = gate.testHooks.heldRecords();
     expect(held[0]).toMatchObject({ name: 'r1' });
     expect(held[999]).toMatchObject({ name: 'r1000' });
     expect(held.some((r) => (r as { name: string }).name === 'r0')).toBe(false);
@@ -53,15 +53,15 @@ describe('consent gate: hold', () => {
 
   it('shows one development notice only', () => {
     const { gate, notice } = make('development');
-    for (let i = 0; i < 1001; i++) gate.holdAdd(rec(i));
+    for (let i = 0; i < 1001; i++) gate.testHooks.holdAdd(rec(i));
     expect(notice).toHaveBeenCalledTimes(1);
-    for (let i = 0; i < 999; i++) gate.holdAdd(rec(i));
+    for (let i = 0; i < 999; i++) gate.testHooks.holdAdd(rec(i));
     expect(notice).toHaveBeenCalledTimes(1);
   });
 
   it('shows no notice in a production build', () => {
     const { gate, notice } = make('production');
-    for (let i = 0; i < 2000; i++) gate.holdAdd(rec(i));
+    for (let i = 0; i < 2000; i++) gate.testHooks.holdAdd(rec(i));
     expect(gate.accessor.holdSize()).toBe(1000);
     expect(notice).not.toHaveBeenCalled();
   });
@@ -80,15 +80,15 @@ describe('consent gate: re-grant removal', () => {
   it('returns the same object while the marker is lowered', () => {
     const { gate } = make();
     const copy = rec(1, fields);
-    expect(gate.removeUserFields(copy)).toBe(copy);
+    expect(gate.testHooks.removeUserFields(copy)).toBe(copy);
   });
 
   it('removes the six fields, keeps the rest, nested refs and freezes', () => {
     const { gate } = make();
     const nested = Object.freeze({ k: 1 });
     const copy = Object.freeze({ name: 'x', ...fields, context_user_data: nested, other: nested }) as never;
-    gate.raise();
-    const result = gate.removeUserFields(copy) as Record<string, unknown>;
+    gate.testHooks.raise();
+    const result = gate.testHooks.removeUserFields(copy) as Record<string, unknown>;
     expect(Object.keys(result).sort()).toEqual(['context_user_data', 'name', 'other']);
     expect(result.context_user_data).toBe(nested);
     expect(result.other).toBe(nested);
@@ -97,16 +97,18 @@ describe('consent gate: re-grant removal', () => {
 });
 
 describe('consent gate: re-grant marker', () => {
-  it('starts lowered, raises on a change to denied, lowers only on a set identity', () => {
+  it('starts lowered, raises on raise(), lowers only on a set identity', () => {
     const { gate } = make();
     expect(gate.accessor.marker()).toBe(false);
-    gate.setState('denied');
+    gate.testHooks.setState('denied');
+    expect(gate.accessor.marker()).toBe(false);
+    gate.testHooks.raise();
     expect(gate.accessor.marker()).toBe(true);
-    gate.setState('granted');
+    gate.testHooks.setState('granted');
     expect(gate.accessor.marker()).toBe(true);
-    gate.lower(undefined);
+    gate.testHooks.lower(undefined);
     expect(gate.accessor.marker()).toBe(true);
-    gate.lower('user-1');
+    gate.testHooks.lower('user-1');
     expect(gate.accessor.marker()).toBe(false);
   });
 
@@ -150,7 +152,7 @@ describe('consent gate: apply rules', () => {
     ['unknown, holding off', { holdWhileUnknown: false }],
   ] as const)('%s: drops without copying', (label, consent) => {
     const { gate, stage, received, logger } = rules(consent);
-    if (label === 'denied') gate.setState('denied');
+    if (label === 'denied') gate.testHooks.setState('denied');
     stage(uncopyable());
     stage(plain());
     expect(logger.logError).not.toHaveBeenCalled();
@@ -160,7 +162,7 @@ describe('consent gate: apply rules', () => {
 
   it('granted passes exactly one deeply frozen copy', () => {
     const { gate, stage, received } = rules();
-    gate.setState('granted');
+    gate.testHooks.setState('granted');
     const original = plain() as { data: { a: unknown[] } };
     stage(original as never);
     expect(received).toHaveLength(1);
@@ -174,7 +176,7 @@ describe('consent gate: apply rules', () => {
 
   it.each(['granted', 'unknown'] as const)('%s: an uncopyable record logs once and reaches no one', (s) => {
     const { gate, stage, received, logger } = rules();
-    if (s === 'granted') gate.setState('granted');
+    if (s === 'granted') gate.testHooks.setState('granted');
     stage(uncopyable());
     expect(logger.logError).toHaveBeenCalledTimes(1);
     expect(received).toHaveLength(0);
@@ -183,13 +185,14 @@ describe('consent gate: apply rules', () => {
 
   it('marker raised: passed and held copies have no user fields', () => {
     const { gate, stage, received } = rules();
-    gate.setState('denied');
+    gate.testHooks.setState('denied');
+    gate.testHooks.raise();
     expect(gate.accessor.marker()).toBe(true);
-    gate.setState('unknown');
+    gate.testHooks.setState('unknown');
     stage(plain());
-    const held = gate.heldRecords()[0] as Record<string, unknown>;
+    const held = gate.testHooks.heldRecords()[0] as Record<string, unknown>;
     expect(held).not.toHaveProperty('context_user_id');
-    gate.setState('granted');
+    gate.testHooks.setState('granted');
     stage(plain());
     expect(received[0]).not.toHaveProperty('context_user_id');
     expect(received[0]).toHaveProperty('name', 'e');
@@ -253,7 +256,7 @@ describe('consent gate: queue and consent change', () => {
     const w = wire([recorder(log)]);
     w.record({ name: 'a' });
     w.record({ name: 'b' });
-    w.gate.holdIdentity({ id: 'u1' as never });
+    w.gate.testHooks.holdIdentity({ id: 'u1' as never });
     w.setConsent('granted');
     expect(log).toEqual(['consent:granted', 'id:u1', 'rec:a', 'rec:b']);
     expect(w.gate.accessor.holdSize()).toBe(0);
@@ -264,7 +267,7 @@ describe('consent gate: queue and consent change', () => {
     const log: Log = [];
     const w = wire([recorder(log)]);
     w.record({ name: 'a' });
-    w.gate.holdIdentity({ id: 'u1' as never });
+    w.gate.testHooks.holdIdentity({ id: 'u1' as never });
     w.setConsent('denied');
     expect(log).toEqual(['consent:denied']);
     expect(w.gate.accessor.holdSize()).toBe(0);
@@ -310,7 +313,7 @@ describe('consent gate: queue and consent change', () => {
     const w = wire([c]);
     w.record({ name: 'a' });
     w.record({ name: 'b' });
-    w.gate.holdIdentity({ id: 'u1' as never });
+    w.gate.testHooks.holdIdentity({ id: 'u1' as never });
     w.setConsent('granted');
     expect(log).toEqual(['consent:granted', 'id:u1', 'rec:a', 'rec:b', 'consent:denied']);
   });
@@ -320,20 +323,20 @@ describe('consent gate: queue and consent change', () => {
     const w = wire([recorder(log)]);
     w.setConsent('maybe' as never);
     expect(log).toEqual([]);
-    expect(w.gate.effectiveState()).toBe('unknown');
+    expect(w.gate.testHooks.effectiveState()).toBe('unknown');
     expect(w.logger.logError).toHaveBeenCalledTimes(1);
   });
 
   it('queued operations run in arrival order after the outermost operation', () => {
     const order: string[] = [];
     const { gate } = make();
-    gate.runQueued(() => {
+    gate.testHooks.runQueued(() => {
       order.push('outer:start');
-      gate.runQueued(() => {
+      gate.testHooks.runQueued(() => {
         order.push('q1');
-        gate.runQueued(() => order.push('q3'));
+        gate.testHooks.runQueued(() => order.push('q3'));
       });
-      gate.runQueued(() => order.push('q2'));
+      gate.testHooks.runQueued(() => order.push('q2'));
       gate.runBusy(() => order.push('busy-inline'));
       order.push('outer:end');
     });
@@ -546,11 +549,166 @@ describe('consent gate: identity and reset', () => {
       isDestroyed: () => false,
       userInfo,
     };
-    gate.runQueued(() => {
+    gate.testHooks.runQueued(() => {
       gate.identify('A' as never, deps);
       gate.resetIdentity(deps);
       order.push('outer:end');
     });
     expect(order).toEqual(['stamp:A', 'clear', 'outer:end', 'id:A', 'id:undefined']);
+  });
+});
+
+describe('consent gate: a throw and a runaway handler', () => {
+  function plainDeps(overrides: Record<string, unknown> = {}) {
+    return {
+      dispatchRecord: () => undefined,
+      dispatchConsentChange: () => undefined,
+      dispatchIdentityChange: () => undefined,
+      isDispatchOpen: () => true,
+      logger: { logError: vi.fn() },
+      isDestroyed: () => false,
+      userInfo: { identify: () => undefined, clear: () => undefined },
+      ...overrides,
+    };
+  }
+
+  it('a throw inside an operation does not strand the queue: queued calls run in order, the error reaches the caller', () => {
+    const { gate } = make();
+    const order: string[] = [];
+    expect(() =>
+      gate.runBusy(() => {
+        gate.testHooks.runQueued(() => order.push('q1'));
+        gate.testHooks.runQueued(() => {
+          order.push('q2');
+          throw new Error('second');
+        });
+        gate.testHooks.runQueued(() => order.push('q3'));
+        throw new Error('first');
+      }),
+    ).toThrow('first');
+    expect(order).toEqual(['q1', 'q2', 'q3']);
+    expect(gate.accessor.queueSize()).toBe(0);
+    // The gate is not left busy: the next operation runs at once.
+    gate.testHooks.runQueued(() => order.push('next'));
+    expect(order.at(-1)).toBe('next');
+  });
+
+  it('keeps the first error when only a queued call throws', () => {
+    const { gate } = make();
+    const order: string[] = [];
+    expect(() =>
+      gate.runBusy(() => {
+        gate.testHooks.runQueued(() => {
+          throw new Error('queued');
+        });
+        gate.testHooks.runQueued(() => order.push('after'));
+      }),
+    ).toThrow('queued');
+    expect(order).toEqual(['after']);
+  });
+
+  it('a throwing connector dispatch inside setConsent still runs a call queued behind it', () => {
+    const { gate } = make();
+    const order: string[] = [];
+    const d = plainDeps({
+      dispatchConsentChange: () => {
+        gate.testHooks.runQueued(() => order.push('queued'));
+        throw new Error('boom');
+      },
+    });
+    expect(() => gate.setConsent('granted', d as never)).toThrow('boom');
+    expect(order).toEqual(['queued']);
+    expect(gate.accessor.queueSize()).toBe(0);
+  });
+
+  it('caps the drain at 100 queued operations and shows one notice for a handler that flips consent forever', () => {
+    const notice = vi.fn();
+    const gate = createConsentGate({ inspector: { notice } });
+    let changes = 0;
+    const d = plainDeps({
+      dispatchConsentChange: (state: TelemetryConsentState) => {
+        changes += 1;
+        gate.setConsent(state === 'granted' ? 'denied' : 'granted', d as never);
+      },
+    });
+    gate.setConsent('granted', d as never);
+    expect(changes).toBe(101);
+    expect(notice).toHaveBeenCalledTimes(1);
+    expect(notice.mock.calls[0][0]).toContain('remaining queued calls were dropped');
+    expect(gate.accessor.queueSize()).toBe(0);
+
+    gate.setConsent('unknown', d as never);
+    expect(notice).toHaveBeenCalledTimes(1);
+    expect(gate.accessor.queueSize()).toBe(0);
+  });
+});
+
+describe('consent gate: start hint', () => {
+  const deps = () => ({
+    dispatchRecord: () => undefined,
+    dispatchConsentChange: () => undefined,
+    dispatchIdentityChange: () => undefined,
+    isDispatchOpen: () => true,
+    logger: { logError: vi.fn() },
+    isDestroyed: () => false,
+    userInfo: { identify: () => undefined, clear: () => undefined },
+  });
+  function start(
+    consent: { unsetCountsAsGranted?: boolean; holdWhileUnknown?: boolean } | undefined,
+    hasRecordHandler: boolean,
+    set?: TelemetryConsentState,
+  ) {
+    const notice = vi.fn();
+    const gate = createConsentGate({ consent, hasRecordHandler, inspector: { notice } });
+    const d = deps();
+    if (set) gate.setConsent(set, d);
+    gate.startPass(d);
+    return notice;
+  }
+
+  it('unknown with holding on: says records wait in the hold and how to pass them', () => {
+    const notice = start(undefined, true);
+    expect(notice).toHaveBeenCalledTimes(1);
+    expect(notice.mock.calls[0][0]).toContain('wait in the hold');
+    expect(notice.mock.calls[0][0]).toContain('1000');
+    expect(notice.mock.calls[0][0]).toContain('unsetCountsAsGranted');
+  });
+
+  it('unknown with holding off, and denied: says records are dropped until a grant', () => {
+    const off = start({ holdWhileUnknown: false }, true);
+    expect(off).toHaveBeenCalledTimes(1);
+    expect(off.mock.calls[0][0]).toContain('dropped');
+    const denied = start(undefined, true, 'denied');
+    expect(denied).toHaveBeenCalledTimes(1);
+    expect(denied.mock.calls[0][0]).toContain('dropped');
+  });
+
+  it('shows nothing when granted, with unsetCountsAsGranted, or with no record handler', () => {
+    expect(start(undefined, true, 'granted')).not.toHaveBeenCalled();
+    expect(start({ unsetCountsAsGranted: true }, true)).not.toHaveBeenCalled();
+    expect(start(undefined, false)).not.toHaveBeenCalled();
+    expect(start(undefined, false, 'denied')).not.toHaveBeenCalled();
+  });
+});
+
+describe('consent gate: consent options are strict', () => {
+  const nonBoolean = 'yes' as unknown as boolean;
+
+  it('unsetCountsAsGranted is on only when exactly true', () => {
+    const gate = createConsentGate({ consent: { unsetCountsAsGranted: nonBoolean }, inspector: { notice: () => undefined } });
+    expect(gate.testHooks.effectiveState()).toBe('unknown');
+  });
+
+  it('holdWhileUnknown is off only when exactly false', () => {
+    const gate = createConsentGate({
+      consent: { holdWhileUnknown: 0 as unknown as boolean },
+      inspector: { notice: () => undefined },
+    });
+    gate.applyRules({ name: 'a' } as never, {
+      dispatchRecord: () => undefined,
+      logger: { logError: vi.fn() },
+      isDestroyed: () => false,
+    });
+    expect(gate.accessor.holdSize()).toBe(1);
   });
 });
