@@ -63,7 +63,7 @@ A few terms used throughout:
 - Handler names, and the shapes of what each handler receives, are left to the code under the connector contract, `cpt-frontx-telemetry-interface-connector`. This feature names handlers by what they receive: a record, an identity change, a consent change, a flush request or a shutdown request.
 
 Out of scope, and touched only where a step meets them:
-- The consent gate's rules: purposes, the hold, identity, identifier removal, the start-time consent pass, and dropping what the gate holds at destroy. They belong to the consent feature, which is stacked on this one, replaces the pass-through step with its rules, and attaches at one named point in start and one in destroy. The two are released together, so connectors never receive records without a consent check.
+- The consent gate's rules: the one consent state, the hold, identity, the start-time consent pass, and dropping what the gate holds at destroy. They belong to the consent feature, which is stacked on this one, replaces the pass-through step with its rules, and attaches at one named point in start and one in destroy. The two are released together, so connectors never receive records without a consent check.
 - The microfrontend reporter and receiver. Dispatch offers a flush-request entry that any component can call; the receiver will be one caller.
 - Flows, dialogs and key actions.
 - Error capture, including its window listeners, which destroy removes at the step this feature names.
