@@ -242,6 +242,79 @@ describe.each<BuildKind>(['production', 'development'])('consent through the cli
     expect(calls).toEqual([]);
   });
 
+  it('an identity kept before start does not survive a denial: identify, deny, grant, start', () => {
+    const calls: Call[] = [];
+    const telemetry = client(calls);
+    telemetry.identify('A');
+    telemetry.setConsent('denied');
+    telemetry.setConsent('granted');
+    telemetry.start();
+
+    expect(calls.filter((c) => c.handler === 'onIdentityChange')).toEqual([]);
+    telemetry.destroy();
+  });
+
+  it('an identity set while denied before start is dropped: deny, identify, grant, start', () => {
+    const calls: Call[] = [];
+    const telemetry = client(calls);
+    telemetry.setConsent('denied');
+    telemetry.identify('A');
+    telemetry.setConsent('granted');
+    telemetry.start();
+
+    expect(calls.filter((c) => c.handler === 'onIdentityChange')).toEqual([]);
+    telemetry.destroy();
+  });
+
+  it('identify before start is still kept under unknown and passed after a grant', () => {
+    const calls: Call[] = [];
+    const telemetry = client(calls);
+    telemetry.identify('A');
+    telemetry.start();
+    telemetry.setConsent('granted');
+
+    expect(calls.filter((c) => c.handler === 'onIdentityChange')).toEqual([
+      { handler: 'onIdentityChange', value: 'A' },
+    ]);
+    telemetry.destroy();
+  });
+
+  it('a record logged by a destroy hook reaches connectors before onFlush when consent is granted', () => {
+    const calls: Call[] = [];
+    const telemetry = client(calls, {}, recordingConnector(calls, {
+      onFlush: () => {
+        calls.push({ handler: 'onFlush' });
+      },
+    }));
+    telemetry.plugin({
+      name: 'parting',
+      setup: (ctx) => ctx.addHook('destroy', () => telemetry.logEvent('parting_event')),
+    });
+    telemetry.setConsent('granted');
+    telemetry.start();
+    calls.length = 0;
+    telemetry.destroy();
+
+    const names = calls.map((c) =>
+      c.handler === 'onRecord' ? `record:${(c.value as TelemetryRecord).name}` : c.handler,
+    );
+    expect(names).toContain('record:parting_event');
+    expect(names.indexOf('record:parting_event')).toBeLessThan(names.indexOf('onFlush'));
+  });
+
+  it('a record logged by a destroy hook is not delivered when consent is unknown', () => {
+    const calls: Call[] = [];
+    const telemetry = client(calls);
+    telemetry.plugin({
+      name: 'parting',
+      setup: (ctx) => ctx.addHook('destroy', () => telemetry.logEvent('parting_event')),
+    });
+    telemetry.start();
+    telemetry.destroy();
+
+    expect(calls.filter((c) => c.handler === 'onRecord')).toEqual([]);
+  });
+
   it('identify, setConsent and resetIdentity after destroy reach no connector', () => {
     const calls: Call[] = [];
     const telemetry = client(calls, { consent: { unsetCountsAsGranted: true } });

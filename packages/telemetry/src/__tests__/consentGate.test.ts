@@ -195,9 +195,16 @@ describe('consent gate: apply rules', () => {
     expect(received[0]).toHaveProperty('name', 'e');
   });
 
-  it('destroyed: nothing is copied, held or passed', () => {
-    const { gate, stage, received, logger, destroy } = rules({ unsetCountsAsGranted: true });
+  it('lifecycle destroyed but gate open: a record is still handled by the rules', () => {
+    const { stage, received, destroy } = rules({ unsetCountsAsGranted: true });
     destroy();
+    stage(plain());
+    expect(received).toHaveLength(1);
+  });
+
+  it('closed gate: nothing is copied, held or passed', () => {
+    const { gate, stage, received, logger } = rules({ unsetCountsAsGranted: true });
+    gate.destroyDrop();
     stage(uncopyable());
     stage(plain());
     expect(received).toHaveLength(0);
@@ -429,9 +436,18 @@ describe('consent gate: identity and reset', () => {
     expect(g.log).toEqual([]);
   });
 
-  it('before start: keeps the latest identity whatever the state, a reset clears it', () => {
+  it('before start: denied drops the identity and a denial clears a kept one', () => {
     const w = wire({ open: false });
+    w.identify('A');
+    expect(w.gate.accessor.keptIdentity()).toEqual({ id: 'A' });
     w.setConsent('denied');
+    expect(w.gate.accessor.keptIdentity()).toBeUndefined();
+    w.identify('B');
+    expect(w.gate.accessor.keptIdentity()).toBeUndefined();
+  });
+
+  it('before start: keeps the latest identity unless denied, a reset clears it', () => {
+    const w = wire({ open: false });
     w.identify('A');
     expect(w.gate.accessor.keptIdentity()).toEqual({ id: 'A' });
     w.identify('B');

@@ -337,7 +337,7 @@ export function createConsentGate(params: {
   // @cpt-algo:cpt-frontx-telemetry-algo-consent-gate-apply-rules:p1
   const applyRules = (record: TelemetryRecord, deps: ConsentRulesDeps): void => {
     // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-apply-rules:p1:inst-rules-check-closed
-    if (deps.isDestroyed() || state.closed) {
+    if (state.closed) {
       return;
     }
     // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-apply-rules:p1:inst-rules-check-closed
@@ -522,6 +522,7 @@ export function createConsentGate(params: {
       // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-consent-change:p1:inst-chg-drop-held
       state.hold = [];
       state.heldIdentity = undefined;
+      state.keptIdentity = undefined;
       raise();
       // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-consent-change:p1:inst-chg-drop-held
       // @cpt-end:cpt-frontx-telemetry-flow-consent-gate-connector-reads:p1:inst-cr-must-stop
@@ -550,7 +551,9 @@ export function createConsentGate(params: {
     // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-identity-through-gate:p1:inst-idg-check-closed
     // @cpt-begin:cpt-frontx-telemetry-algo-consent-gate-identity-through-gate:p1:inst-idg-keep-before-start
     if (!deps.isDispatchOpen()) {
-      state.keptIdentity = { id };
+      if (effectiveState() !== 'denied') {
+        state.keptIdentity = { id };
+      }
       return;
     }
     // @cpt-end:cpt-frontx-telemetry-algo-consent-gate-identity-through-gate:p1:inst-idg-keep-before-start

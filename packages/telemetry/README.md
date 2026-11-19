@@ -152,7 +152,10 @@ governs connectors only:
   change, then the held identity, then the held records in order. With
   `consent.holdWhileUnknown: false` those records are dropped instead of held.
 - **Denied**: nothing reaches connectors except the consent change itself, and whatever was held
-  is dropped. After a denial, records carry no user fields until a new identity is set.
+  is dropped. After a denial, records passed to connectors lack the six `context_user_*` identity
+  fields (`context_user_data` stays) until the application calls `identify` again while consent
+  allows it and that identity has been passed to connectors. An `identify` made while consent is
+  denied is dropped.
 
 With the default options a client that supplies connectors sends them nothing until the
 application calls `setConsent('granted')` (or sets `consent.unsetCountsAsGranted: true`), because

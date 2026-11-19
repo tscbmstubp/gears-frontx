@@ -78,7 +78,7 @@ Realizes the connector, telemetry-state and development-visibility requirements,
 
 **Principles**: `cpt-frontx-telemetry-principle-shell-owns-application-state`, `cpt-frontx-telemetry-principle-recording-never-fails-caller`
 
-**Components**: `cpt-frontx-telemetry-component-client`, `cpt-frontx-telemetry-component-events-manager`, `cpt-frontx-telemetry-component-connector-dispatch`, `cpt-frontx-telemetry-component-consent-gate` (only its stage before dispatch, built here as a pass-through), `cpt-frontx-telemetry-component-dev-inspector`
+**Components**: `cpt-frontx-telemetry-component-client`, `cpt-frontx-telemetry-component-events-manager`, `cpt-frontx-telemetry-component-connector-dispatch`, `cpt-frontx-telemetry-component-consent-gate` (only its stage before dispatch, which hands each record to the consent rules; they pass one frozen copy to dispatch, hold it or drop it), `cpt-frontx-telemetry-component-dev-inspector`
 
 **Interfaces**: `cpt-frontx-telemetry-interface-connector`, `cpt-frontx-telemetry-interface-declared-capture-surface`
 
@@ -142,7 +142,7 @@ Realizes the connector, telemetry-state and development-visibility requirements,
    1. [x] - `p1` - **IF** the collector is on beside application connectors - `inst-check-collector-beside`
       1. [x] - `p1` - System keeps the shipped collector path working beside the connectors, and a development build shows a notice that both are active - `inst-collector-beside-connectors`
    2. [x] - `p1` - Developer records an event on any recording surface - `inst-record-event`
-   3. [x] - `p1` - System builds, enriches and hands the record on, using `cpt-frontx-telemetry-algo-connector-delivery-record-handoff`; the consent gate's stage passes one frozen copy to dispatch, using `cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through`, and dispatch calls every connector's handler for a record, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record` - `inst-deliver-record`
+   3. [x] - `p1` - System builds, enriches and hands the record on, using `cpt-frontx-telemetry-algo-connector-delivery-record-handoff`; the consent gate's stage hands the record to the consent rules, which pass one frozen copy to dispatch, hold it or drop it, using `cpt-frontx-telemetry-algo-connector-delivery-gate-pass-through`, and dispatch calls every connector's handler for a record, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record` - `inst-deliver-record`
    4. [x] - `p1` - End user hides or closes the page; system asks every connector to flush inside that page event, using `cpt-frontx-telemetry-algo-connector-delivery-page-flush` - `inst-flush-on-page-hide`
 7. [x] - `p1` - Developer destroys the client; after the shipped teardown, system runs `cpt-frontx-telemetry-algo-connector-delivery-destroy` - `inst-destroy-client`
 8. [x] - `p1` - **RETURN** a client that delivered through the application's connectors, or captured nothing in production without one, with nothing in the package naming a backend - `inst-return-connected`

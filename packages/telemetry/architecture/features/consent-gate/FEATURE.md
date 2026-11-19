@@ -225,7 +225,7 @@ This replaces step `inst-pass-at-once` of `cpt-frontx-telemetry-algo-connector-d
 **Output**: A frozen copy passed to dispatch, held, or nothing, with the record dropped; nothing returned
 
 **Steps**:
-1. [x] - `p1` - **IF** the client is destroyed, or the gate is closed, **RETURN** nothing at once; nothing is copied, kept, held or passed. Destroyed means the client's lifecycle, which is set the moment destroy begins - `inst-rules-check-closed`
+1. [x] - `p1` - **IF** the gate is closed, **RETURN** nothing at once; nothing is copied, held or passed. The gate closes when the destroy drop runs, after dispatch closes, so a record a plugin's destroy hook logs during teardown is still handled by the rules below; dispatch itself drops anything after it closes - `inst-rules-check-closed`
 2. [x] - `p1` - Read the effective state, using `cpt-frontx-telemetry-algo-consent-gate-effective-state` - `inst-rules-read-state`
 3. [x] - `p1` - **IF** the effective state is denied, or unknown with `holdWhileUnknown` off - `inst-rules-check-drop`
    1. [x] - `p1` - Drop the record without copying or stripping it, so no copy failure is reported for a dropped record - `inst-rules-drop`
@@ -296,7 +296,7 @@ Applying the rules to a record, the start pass and the destroy drop mark the gat
       1. [x] - `p1` - **IF** the client was destroyed during this release, stop at once and pass no more - `inst-chg-stop-destroyed`
       2. [x] - `p1` - Pass the record to dispatch as it was held, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-record`. The re-grant decision was made when the gate received it, and is not made again - `inst-chg-pass-held`
 7. [x] - `p1` - **ELSE IF** the effective state is now denied - `inst-chg-check-denied`
-   1. [x] - `p1` - Drop the held records and the held identity, and raise the re-grant marker, using `cpt-frontx-telemetry-state-consent-gate-regrant-marker` - `inst-chg-drop-held`
+   1. [x] - `p1` - Drop the held records, the held identity and the kept identity, and raise the re-grant marker, using `cpt-frontx-telemetry-state-consent-gate-regrant-marker` - `inst-chg-drop-held`
 8. [x] - `p1` - **RETURN** nothing. A `setConsent` call a handler made during this release was queued and runs now, so the release has finished first and every connector sees the consent changes in the same order - `inst-chg-return`
 
 ### Identity Through The Gate
@@ -310,7 +310,7 @@ Applying the rules to a record, the start pass and the destroy drop mark the gat
 **Steps**:
 1. [x] - `p1` - The shipped stamping has already run through the user-info manager, which `identify` calls first. This algorithm adds only the gate's rules - `inst-idg-shipped-stamp`
 2. [x] - `p1` - **IF** the client is destroyed, or the gate is closed, **RETURN** nothing; nothing is kept, held or passed - `inst-idg-check-closed`
-3. [x] - `p1` - **IF** dispatch is WAITING, which means the client has not started and never means closed, keep the identifier as the latest kept identity, whatever the effective state, replacing any identity already kept, and **RETURN** nothing. The start pass decides what happens to it - `inst-idg-keep-before-start`
+3. [x] - `p1` - **IF** dispatch is WAITING, which means the client has not started and never means closed, keep the identifier as the latest kept identity, replacing any identity already kept, unless the effective state is denied, in which case drop it and keep nothing; then **RETURN** nothing. The start pass decides what happens to a kept identity - `inst-idg-keep-before-start`
 4. [x] - `p1` - Read the effective state, using `cpt-frontx-telemetry-algo-consent-gate-effective-state` - `inst-idg-read-state`
 5. [x] - `p1` - **IF** the effective state is granted - `inst-idg-check-granted`
    1. [x] - `p1` - Pass an identity change to dispatch, using `cpt-frontx-telemetry-algo-connector-delivery-dispatch-signal`: a set identity carrying the identifier, or a cleared one for a released cleared identity - `inst-idg-pass`
@@ -601,9 +601,9 @@ After a denial, the gate **MUST** remove the six user fields, leaving `context_u
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-consent-gate-identity-before-start`
 
-Before dispatch opens, which means dispatch is WAITING, the gate **MUST** keep the latest identity whatever the state, and `resetIdentity()` before start **MUST** clear what it keeps. At the start pass, after passing the effective state, the gate **MUST** pass the kept identity at once if the state is granted, keep it held if unknown, and drop it if denied.
+Before dispatch opens, which means dispatch is WAITING, the gate **MUST** keep the latest identity unless the effective state is denied, which drops it, and a denial **MUST** also drop an identity already kept; and `resetIdentity()` before start **MUST** clear what it keeps. At the start pass, after passing the effective state, the gate **MUST** pass the kept identity at once if the state is granted, keep it held if unknown, and drop it if denied.
 
-**Verification**: A unit test sets `unsetCountsAsGranted`, calls `identify` before start, and starts. It asserts the test connector receives the consent state and then the identity at start. Further tests assert that a second identify before start replaces the first, that a reset before start leaves nothing to pass, that an unknown state keeps the identity for a later grant, and that a denied state drops it. Unit tests on the gate module read the kept identity through the internal accessor.
+**Verification**: A unit test sets `unsetCountsAsGranted`, calls `identify` before start, and starts. It asserts the test connector receives the consent state and then the identity at start. Further tests assert that a second identify before start replaces the first, that a reset before start leaves nothing to pass, that an unknown state keeps the identity for a later grant, and that a denied state drops it. Two sequences end with no identity passed at start: identify, deny, grant, start; and deny, identify, grant, start. Unit tests on the gate module read the kept identity through the internal accessor.
 
 **Implements**:
 - `cpt-frontx-telemetry-algo-consent-gate-identity-through-gate`
