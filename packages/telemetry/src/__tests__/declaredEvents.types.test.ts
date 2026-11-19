@@ -26,7 +26,37 @@ function positives() {
   type BillingCatalog = { 'billing.invoice_opened': { invoiceId: string } };
   const mfeOk: CatalogCheck<BillingCatalog, 'billing'> = true;
   const emptyOk: CatalogCheck<Record<never, never>, 'anything'> = true;
-  return [plain, shell, ns, name, data, mfeOk, emptyOk];
+
+  type NestedCatalog = {
+    'app.nested': {
+      a: string;
+      b: number;
+      c: boolean;
+      d: null;
+      e: (string | number)[];
+      f: { g: { h: string[]; i?: number } };
+      j?: string;
+    };
+  };
+  const nestedOk: CatalogCheck<NestedCatalog, 'app'> = true;
+  interface Detail {
+    id: string;
+    tags: string[];
+  }
+  interface InterfaceData {
+    detail: Detail;
+    count?: number;
+  }
+  type InterfaceCatalog = { 'app.iface': InterfaceData };
+  const interfaceOk: CatalogCheck<InterfaceCatalog, 'app'> = true;
+  interface TreeNode {
+    label: string;
+    children: TreeNode[];
+  }
+  type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+  type RecursiveCatalog = { 'app.tree': { root: TreeNode }; 'app.raw': { payload: Json } };
+  const recursiveOk: CatalogCheck<RecursiveCatalog, 'app'> = true;
+  return [plain, shell, ns, name, data, mfeOk, emptyOk, nestedOk, interfaceOk, recursiveOk];
 }
 
 // Negative cases: never called; each line must fail the type check.
@@ -72,7 +102,23 @@ function negatives() {
   type MfeCatalog = { 'billing.invoice_opened': { invoiceId: string } };
   // @ts-expect-error microfrontend catalog whose names do not start with its namespace
   const mfeBad: CatalogCheck<MfeCatalog, 'reports'> = true;
-  return [mfeBad];
+  // @ts-expect-error data holds a Date
+  const dateBad: CatalogCheck<{ 'app.a': { at: Date } }, 'app'> = true;
+  // @ts-expect-error data holds a Map
+  const mapBad: CatalogCheck<{ 'app.a': { m: Map<string, string> } }, 'app'> = true;
+  // @ts-expect-error data holds a Set
+  const setBad: CatalogCheck<{ 'app.a': { s: Set<string> } }, 'app'> = true;
+  // @ts-expect-error data holds a Uint8Array
+  const bytesBad: CatalogCheck<{ 'app.a': { b: Uint8Array } }, 'app'> = true;
+  // @ts-expect-error data holds a function
+  const fnBad: CatalogCheck<{ 'app.a': { f: () => void } }, 'app'> = true;
+  // @ts-expect-error data holds a bigint
+  const bigBad: CatalogCheck<{ 'app.a': { n: bigint } }, 'app'> = true;
+  // @ts-expect-error data holds a Date nested in a record inside an array
+  const nestedBad: CatalogCheck<{ 'app.a': { list: { when: Date }[] } }, 'app'> = true;
+  // @ts-expect-error data holds an unknown value
+  const unknownBad: CatalogCheck<{ 'app.a': { u: unknown } }, 'app'> = true;
+  return [mfeBad, dateBad, mapBad, setBad, bytesBad, fnBad, bigBad, nestedBad, unknownBad];
 }
 
 describe('declared events type tests', () => {

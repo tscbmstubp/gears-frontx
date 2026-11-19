@@ -6,8 +6,9 @@ import type { TelemetryRecord, TelemetryUserId } from '../utils/eventTypes';
  * that signal only.
  *
  * Handlers run on the caller's stack and must stay cheap. Do not record from a handler, including
- * after an `await`. Catch your own requests: an unhandled rejection becomes an error event. A
- * record a handler receives is a frozen copy, the same one every connector gets.
+ * after an `await`. Catch your own requests: once the package captures unhandled errors, an
+ * unhandled rejection becomes an error event. A record a handler receives is a frozen copy, the
+ * same one every connector gets.
  */
 // @cpt-begin:cpt-frontx-telemetry-flow-connector-delivery-connect-backend:p1:inst-write-connectors
 export type TelemetryConnector = {

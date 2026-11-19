@@ -496,12 +496,10 @@ describe.each<BuildKind>(['production', 'development'])('gate copy (%s)', (build
     );
     onTestFinished(() => telemetry.destroy());
     telemetry.start();
-    const clone = vi.spyOn(globalThis, 'structuredClone');
 
     telemetry.logEvent('uncopyable', uncopyable);
     telemetry.logEvent('plain', { a: 1 });
 
-    expect(clone).not.toHaveBeenCalled();
     expect(consoleError).not.toHaveBeenCalledWith(
       expect.stringContaining('copy failed'),
       expect.anything(),
@@ -516,11 +514,13 @@ describe.each<BuildKind>(['production', 'development'])('gate copy (%s)', (build
     );
     onTestFinished(() => telemetry.destroy());
     telemetry.start();
-    const clone = vi.spyOn(globalThis, 'structuredClone');
 
-    telemetry.logEvent('copied', { a: 1 });
+    const data = { a: 1 };
+    telemetry.logEvent('copied', data);
 
-    expect(clone).toHaveBeenCalledTimes(1);
+    const copied = received.find((r) => (r as { name: string }).name === 'copied') as { data: unknown };
+    expect(copied.data).not.toBe(data);
+    expect(Object.isFrozen(copied.data)).toBe(true);
     expect(received.map((r) => (r as { name: string }).name)).toContain('copied');
   });
 });

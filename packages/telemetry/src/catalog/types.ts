@@ -69,6 +69,35 @@ type BadDataNames<C> = {
 // @cpt-end:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-data-shape-kind
 // @cpt-end:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-each-declared-name
 
+// Whether a value type is JSON-like: strings, numbers, booleans, null, and arrays and records of
+// these. A property may also be undefined, which JSON leaves out. Records are walked property by
+// property rather than tested against an index signature, so an interface-declared shape passes.
+// A Date, Map, Set, typed array or ArrayBuffer fails through its methods, and a function, bigint,
+// symbol, `unknown` or `any` fails outright. The walk stops after ten levels and accepts what lies
+// deeper, so a recursive shape such as a tree or a general JSON type compiles; the gate's copy
+// still checks that data at runtime.
+type IsAny<V> = 0 extends 1 & V ? true : false;
+
+type JsonLikeResult<V, Depth extends unknown[] = []> = Depth['length'] extends 10
+  ? true
+  : IsAny<V> extends true
+    ? false
+    : V extends string | number | boolean | null | undefined
+      ? true
+      : V extends bigint | symbol | ((...args: never[]) => unknown)
+        ? false
+        : V extends readonly (infer Item)[]
+          ? JsonLikeResult<Item, [...Depth, unknown]>
+          : V extends object
+            ? { [K in keyof V]-?: JsonLikeResult<V[K], [...Depth, unknown]> }[keyof V]
+            : false;
+
+// @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-data-values-json-like
+type NonJsonDataNames<C> = {
+  [N in CatalogName<C>]: [JsonLikeResult<C[N]>] extends [true] ? never : N;
+}[CatalogName<C>];
+// @cpt-end:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-data-values-json-like
+
 // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-reserved-namespace
 type ReservedNamespace = '' | 'frontx' | 'page_view' | 'session_start' | `autocapture_${string}`;
 // @cpt-end:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-reserved-namespace
@@ -77,7 +106,8 @@ type ReservedNamespace = '' | 'frontx' | 'page_view' | 'session_start' | `autoca
 // @cpt-algo:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1
 type CatalogShapeCheck<C> = [OneSegmentNames<C>] extends [never]
   ? [BadDataNames<C>] extends [never]
-    ? // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-shared-segment
+    ? [NonJsonDataNames<C>] extends [never]
+      ? // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-check-shared-segment
       IsUnion<CatalogNamespace<C>> extends true
       ? // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-refuse-mixed-namespaces
         TelemetryCatalogError<'The catalog names do not share one first segment'>
@@ -90,13 +120,16 @@ type CatalogShapeCheck<C> = [OneSegmentNames<C>] extends [never]
           TelemetryCatalogError<`The namespace "${CatalogNamespace<C>}" is empty or reserved`>
         : // @cpt-end:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-refuse-reserved-namespace
           TelemetryCatalogOk
-    : TelemetryCatalogError<`The data of "${BadDataNames<C>}" is not a record of named values`>
+      : // @cpt-begin:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-refuse-non-json-values
+        TelemetryCatalogError<`The data of "${NonJsonDataNames<C>}" holds a value that is not JSON-like (strings, numbers, booleans, null, and arrays or records of them)`>
+    : // @cpt-end:cpt-frontx-telemetry-algo-declared-events-catalog-rules:p1:inst-refuse-non-json-values
+      TelemetryCatalogError<`The data of "${BadDataNames<C>}" is not a record of named values`>
   : TelemetryCatalogError<`The name "${OneSegmentNames<C>}" has fewer than two segments`>;
 
 /**
  * Checks an event catalog against the namespace given beside it: the client's namespace option or
  * a microfrontend's namespace. Resolves to `true` when every name has at least two dot-separated
- * segments, every data shape is a record of named values, all names share one non-reserved first
+ * segments, every data shape is a record of named JSON-like values, all names share one non-reserved first
  * segment and `NS` is exactly that segment; otherwise to a {@link TelemetryCatalogError}. A catalog
  * that declares no name needs no namespace and always passes.
  *

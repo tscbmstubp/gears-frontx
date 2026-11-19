@@ -39,7 +39,7 @@ The feature-entry identifier the kit's template places here is deliberately abse
 
 ### 1.1 Overview
 
-Covers declared events: events an application lists in an event catalog, each with the shape of its data, which is a record of named values. The catalog is a type the application writes and gives to the client as a type parameter, so it exists only for the type checker and adds nothing at runtime. An event name is a list of segments separated by a dot. Its first segment is a namespace, the short name of the shell or the microfrontend that owns the event, and at least one more segment follows. This feature specifies the catalog's rules, the namespace option whose type comes from the catalog, the namespaces no catalog may use, and the typed record call that accepts only declared names and data. The package exports the catalog check as one type, which the client uses now and the microfrontend reporter will use later.
+Covers declared events: events an application lists in an event catalog, each with the shape of its data, which is a record of named JSON-like values. The catalog is a type the application writes and gives to the client as a type parameter, so it exists only for the type checker and adds nothing at runtime. An event name is a list of segments separated by a dot. Its first segment is a namespace, the short name of the shell or the microfrontend that owns the event, and at least one more segment follows. This feature specifies the catalog's rules, the namespace option whose type comes from the catalog, the namespaces no catalog may use, and the typed record call that accepts only declared names and data. The package exports the catalog check as one type, which the client uses now and the microfrontend reporter will use later.
 
 It also specifies how the surfaces this design adds keep a record going, and keep the caller safe, when a plugin fails while the record is being enriched. Such a failure is reported as a development notice, a console message that only the development build shows. Which build runs is a build-kind constant that the package's own build sets in each of its two builds, not the consumer's environment, and unit tests run the client under both values.
 
@@ -102,7 +102,7 @@ Realizes the declared-event and namespace requirements, and the recording-surfac
 - The typed record call is made after destroy: the record is dropped as shipped, and nothing is thrown.
 
 **Steps**:
-1. [x] - `p1` - Developer writes the shell's event catalog as a type: each event name, made of the shell's namespace and at least one more segment, with the shape of its data as a record of named values - `inst-write-shell-catalog`
+1. [x] - `p1` - Developer writes the shell's event catalog as a type: each event name, made of the shell's namespace and at least one more segment, with the shape of its data as a record of named JSON-like values - `inst-write-shell-catalog`
 2. [x] - `p1` - Developer creates the client with the catalog as its explicit type parameter and the namespace option set to the catalog's shared first segment; the option's type comes from the catalog - `inst-create-typed-client`
 3. [x] - `p1` - Type checker applies `cpt-frontx-telemetry-algo-declared-events-catalog-rules` to the catalog and the namespace option - `inst-check-shell-catalog`
 4. [x] - `p1` - **IF** the catalog or the namespace option breaks a rule - `inst-check-shell-catalog-fails`
@@ -129,7 +129,7 @@ Realizes the declared-event and namespace requirements, and the recording-surfac
 - The catalog uses a reserved namespace, or declares a name with only one segment: the type check fails before the microfrontend is built.
 
 **Steps**:
-1. [x] - `p1` - Developer of a microfrontend writes its catalog as a type, every name made of the microfrontend's namespace and at least one more segment, and every data shape a record of named values - `inst-write-mfe-catalog`
+1. [x] - `p1` - Developer of a microfrontend writes its catalog as a type, every name made of the microfrontend's namespace and at least one more segment, and every data shape a record of named JSON-like values - `inst-write-mfe-catalog`
 2. [x] - `p1` - Type checker applies `cpt-frontx-telemetry-algo-declared-events-catalog-rules` through the exported catalog-check type, with the microfrontend's namespace - `inst-check-mfe-catalog`
 3. [x] - `p1` - **IF** the catalog or the namespace breaks a rule - `inst-check-mfe-catalog-fails`
    1. [x] - `p1` - **RETURN** a type error before the microfrontend is built - `inst-refuse-mfe-catalog`
@@ -158,6 +158,8 @@ The namespace option's type comes from the catalog because TypeScript cannot inf
       1. [x] - `p1` - **RETURN** a type error for that name - `inst-refuse-one-segment`
    3. [x] - `p1` - **IF** its data shape is not a record of named values - `inst-check-data-shape-kind`
       1. [x] - `p1` - **RETURN** a type error for that name - `inst-refuse-data-shape-kind`
+   4. [x] - `p1` - **IF** a value in its data shape, within its first ten levels, is not JSON-like: JSON-like means strings, numbers, booleans, null, and arrays and records of these, and an optional property is allowed. What lies deeper is accepted, so a recursive shape such as a tree compiles, and the gate's copy still checks that data at runtime - `inst-check-data-values-json-like`
+      1. [x] - `p1` - **RETURN** the catalog refused with a message that names the event - `inst-refuse-non-json-values`
 3. [x] - `p1` - **IF** the declared names do not all share one first segment - `inst-check-shared-segment`
    1. [x] - `p1` - **RETURN** a type error - `inst-refuse-mixed-namespaces`
 4. [x] - `p1` - Take that shared first segment as the catalog's namespace; being one segment, it holds no dot - `inst-derive-namespace`
@@ -245,9 +247,9 @@ One machine per event hook function, for the life of the client. It decides only
 
 - [x] `p1` - **ID**: `cpt-frontx-telemetry-dod-declared-events-catalog-type`
 
-The client **MUST** take the application's event catalog as a type parameter, in which each declared data shape is a record of named values, and its typed record call **MUST** accept only declared names and the data shape declared for each. A wrong name or a wrong shape **MUST** fail the type check before the application runs. The catalog **MUST** add nothing at runtime, and the shipped untyped `logEvent` **MUST** keep working unchanged.
+The client **MUST** take the application's event catalog as a type parameter, in which each declared data shape is a record of named JSON-like values, and its typed record call **MUST** accept only declared names and the data shape declared for each. A wrong name or a wrong shape **MUST** fail the type check before the application runs. The catalog **MUST** add nothing at runtime, and the shipped untyped `logEvent` **MUST** keep working unchanged.
 
-**Verification**: A type test asserts that a call with an undeclared name, a call with data of the wrong shape, and a catalog whose data shape is not a record of named values each fail to compile, and that a call with a declared name and its shape compiles.
+**Verification**: A type test asserts that a call with an undeclared name, a call with data of the wrong shape, and a catalog whose data shape is not a record of named values each fail to compile; that a catalog whose data holds a `Date`, a `Map` or a function fails to compile; and that a call with a declared name and its shape compiles, as does a nested record of strings, numbers, booleans, null and arrays, with optional properties, and a recursive shape such as a tree or a general JSON type.
 
 **Implements**:
 - `cpt-frontx-telemetry-flow-declared-events-shell-events`
@@ -323,6 +325,7 @@ On every recording surface this design adds, a plugin or hook that throws during
 ## 6. Acceptance Criteria
 
 - [x] A typed record call with a declared name and its data shape compiles; one with an undeclared name or data of the wrong shape fails to compile.
+- [x] A catalog whose data holds a value that is not JSON-like, such as a `Date`, a `Map`, a `Set`, a typed array, a function or a bigint, fails to compile; a nested record of strings, numbers, booleans, null and arrays, with optional properties, compiles.
 - [x] A catalog whose names do not share one first segment fails to compile, and so does a namespace option that is missing or does not match that segment.
 - [x] A client with no catalog needs no namespace option and compiles unchanged.
 - [x] The exported catalog-check type refuses a microfrontend catalog whose names do not start with that microfrontend's namespace.

@@ -155,6 +155,11 @@ Rules for connector code:
   closes. Requests sent then with `keepalive` or as a beacon share the browser's 64 KiB allowance
   with every other such request from the page.
 - Each record is a deep-frozen copy, the same one every connector receives. Do not try to change it.
+  The copy holds JSON-like data only: a date becomes its ISO string, a map a plain object with
+  string keys, a set and byte data (typed arrays, `ArrayBuffer`, `DataView`) arrays, a number that
+  is not finite becomes null, an undefined property is left out and an undefined array item becomes
+  null. Data with no JSON form (a function, a symbol, a bigint or a cycle) never reaches a
+  connector; the failure is logged. The collector keeps the original record as before.
 
 With no connector and the collector off, a production build stays silent: `start()` registers no
 plugin, installs no listener and writes nothing to storage, and recording calls return at once.
